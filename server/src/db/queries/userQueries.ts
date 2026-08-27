@@ -14,7 +14,7 @@ export async function findUserByGithubId(githubId: number) {
 export async function createUser(
     githubId: number,
     githubUsername: string,
-    email: string,
+    email: string | null,
     avatarUrl: string | null,
     githubAccessToken: string,
 ) {
