@@ -7,9 +7,11 @@ import {
 import {
     createUser,
     findUserByGithubId,
+    findUserById,
     updateGithubAccessToken,
 } from "../db/queries/userQueries.js";
 import { generateToken } from "../utils/jwt.js";
+import type { AuthRequest } from "../middleware/auth.js";
 
 const githubLogin = (req: express.Request, res: express.Response) => {
     const authUrl = getGithubAuthUrl();
@@ -26,6 +28,7 @@ const setAuthCookie = (res: express.Response, userId: string) => {
     });
 };
 
+//for both register and login
 const githubCallback = async (req: express.Request, res: express.Response) => {
     try {
         const { code } = req.query;
@@ -62,7 +65,7 @@ const githubCallback = async (req: express.Request, res: express.Response) => {
 
         setAuthCookie(res, user.id);
 
-        return res.redirect("http://localhost:3000/home"); //redirect to be changed later
+        return res.redirect("http://localhost:3000/auth/me"); //redirect to be changed later
     } catch (err) {
         console.error("Github oauth error", err);
         return res.status(500).json({
@@ -71,4 +74,34 @@ const githubCallback = async (req: express.Request, res: express.Response) => {
     }
 };
 
-export { githubLogin, githubCallback };
+const getUserDetails = async (req: AuthRequest, res: express.Response) => {
+    try {
+        const userId = req.userId;
+        if (!userId) {
+            return res.status(401).json({ error: "Not Authenticated" });
+        }
+
+        const user = await findUserById(userId);
+        if (!user) {
+            return res.status(404).json({
+                error: "User not found",
+            });
+        }
+
+        return res.status(200).json({ user });
+    } catch (err) {
+        console.error("Error while getting user details", err);
+        return res.status(500).json({ message: "Internal server error" });
+    }
+};
+
+const logoutUser = (req: AuthRequest, res: express.Response) => {
+    res.clearCookie("token", {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+    });
+    return res.status(200).json({ message: "Logged out successfully" });
+};
+
+export { githubLogin, githubCallback, getUserDetails, logoutUser };
