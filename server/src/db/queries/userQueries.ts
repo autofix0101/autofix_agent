@@ -58,3 +58,14 @@ export async function updateGithubAccessToken(
     const result = await pool.query(query, [githubId, githubAccessToken]);
     return result.rows[0];
 }
+
+export async function getUserGithubAccessToken(userId: string) {
+    const query = `
+        SELECT github_access_token
+        FROM users
+        WHERE id = $1;
+    `;
+    const result = await pool.query(query, [userId]);
+
+    return result.rows[0]?.github_access_token;
+}
