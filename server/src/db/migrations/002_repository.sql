@@ -18,6 +18,3 @@ CREATE TABLE repositories (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, github_repo_id)
 );
-
-CREATE INDEX idx_repositories_user_id
-ON repositories(user_id);
