@@ -65,7 +65,7 @@ const githubCallback = async (req: express.Request, res: express.Response) => {
 
         setAuthCookie(res, user.id);
 
-        return res.redirect("http://localhost:3000/auth/me"); //redirect to be changed later
+        return res.redirect("http://localhost:5173/repos");
     } catch (err) {
         console.error("Github oauth error", err);
         return res.status(500).json({
