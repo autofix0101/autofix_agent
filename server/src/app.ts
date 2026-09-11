@@ -5,9 +5,17 @@ import cookieParser from "cookie-parser";
 import authRoutes from "./routes/authRoutes.js";
 import githubRepoRoutes from "./routes/githubRepoRoutes.js";
 import repoRoutes from "./routes/repoRoutes.js";
+import webhookRoutes from "./routes/webhookRoutes.js";
 
 const app = express();
 
+// ── Webhook routes ────────────────────────────────────────────────────────────
+// Mounted BEFORE express.json() so that the raw body Buffer is preserved for
+// HMAC-SHA256 signature verification. The webhook route applies express.raw()
+// locally; express.json() below does not affect it.
+app.use("/webhooks", webhookRoutes);
+
+// ── Global middleware ─────────────────────────────────────────────────────────
 app.use(express.json());
 app.use(cookieParser());
 
