@@ -5,6 +5,7 @@ import {
     insertSignalIgnoreDuplicate,
     upsertIssueSignal,
 } from "../db/queries/signalQueries.js";
+import { sseService } from "../services/sseService.js";
 
 const WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET!;
 
@@ -94,9 +95,34 @@ export const handleGithubWebhook = async (
     // ── 5. Dispatch to event-specific handler ─────────────────────────────────
     try {
         if (event === "issues") {
-            await handleIssueEvent(payload, repo.id);
+            const signal = await handleIssueEvent(payload, repo.id);
+            // Broadcast to any open SSE connections for this user
+            if (signal && repo.user_id) {
+                const parsed = typeof signal.parsed_data === "string" ? (() => {
+                    try { return JSON.parse(signal.parsed_data); } catch { return {}; }
+                })() : (signal.parsed_data || {});
+
+                sseService.broadcast(repo.user_id, {
+                    repoId: repo.id,
+                    signalId: signal.id,
+                    type: "github_issue",
+                    title: parsed?.title ?? `Issue #${signal.source_ref}`,
+                });
+            }
         } else if (event === "workflow_run") {
-            await handleWorkflowRunEvent(payload, repo.id);
+            const signal = await handleWorkflowRunEvent(payload, repo.id);
+            if (signal && repo.user_id) {
+                const parsed = typeof signal.parsed_data === "string" ? (() => {
+                    try { return JSON.parse(signal.parsed_data); } catch { return {}; }
+                })() : (signal.parsed_data || {});
+
+                sseService.broadcast(repo.user_id, {
+                    repoId: repo.id,
+                    signalId: signal.id,
+                    type: "ci_failure",
+                    title: parsed?.workflow_name ?? `CI failure (run ${signal.source_ref})`,
+                });
+            }
         } else {
             // Unknown / future event type — acknowledge and ignore
             return res.status(200).json({ message: "event not handled" });
@@ -114,14 +140,14 @@ export const handleGithubWebhook = async (
 
 // ── Issue event ───────────────────────────────────────────────────────────────
 
-async function handleIssueEvent(payload: any, repoId: string): Promise<void> {
+async function handleIssueEvent(payload: any, repoId: string) {
     const { action, issue, repository } = payload;
 
     // Only create/update signals for issues being opened or reopened.
     // edited, labeled, commented, closed, etc. are deliberately ignored —
     // signals are snapshots of the "needs investigation" state.
     if (action !== "opened" && action !== "reopened") {
-        return;
+        return null;
     }
 
     const sourceRef = String(issue.number);
@@ -155,6 +181,7 @@ async function handleIssueEvent(payload: any, repoId: string): Promise<void> {
             `[webhook] github_issue signal id=${signal.id} upserted for issue #${issue.number} (action="${action}") in internal repo ${repoId}`,
         );
     }
+    return signal;
 }
 
 // ── Workflow run event ────────────────────────────────────────────────────────
@@ -162,13 +189,13 @@ async function handleIssueEvent(payload: any, repoId: string): Promise<void> {
 async function handleWorkflowRunEvent(
     payload: any,
     repoId: string,
-): Promise<void> {
+) {
     const { action, workflow_run, repository } = payload;
 
     // Only act on completed runs that actually failed.
     // success, cancelled, skipped, etc. are not actionable by Autofix.
-    if (action !== "completed") return;
-    if (workflow_run?.conclusion !== "failure") return;
+    if (action !== "completed") return null;
+    if (workflow_run?.conclusion !== "failure") return null;
 
     const sourceRef = String(workflow_run.id);
 
@@ -212,4 +239,5 @@ async function handleWorkflowRunEvent(
             `[webhook] ci_failure signal for run ${workflow_run.id} already exists — duplicate delivery ignored`,
         );
     }
+    return signal;
 }

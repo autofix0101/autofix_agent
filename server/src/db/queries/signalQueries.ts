@@ -76,3 +76,29 @@ export async function upsertIssueSignal(signal: SignalInput) {
     const result = await pool.query(query, values);
     return result.rows[0] ?? null;
 }
+
+/**
+ * Return all signals for a repository, ordered newest-first.
+ * Joins through `repositories` so the user_id ownership check is implicit —
+ * only signals belonging to repos owned by `userId` can be returned.
+ */
+export async function getSignalsByRepoId(repoId: string, userId: string) {
+    const query = `
+        SELECT
+            s.id,
+            s.type,
+            s.source_ref,
+            s.status,
+            s.parsed_data,
+            s.raw_content,
+            s.created_at
+        FROM signals s
+        JOIN repositories r ON r.id = s.repo_id
+        WHERE s.repo_id = $1
+          AND r.user_id = $2
+        ORDER BY s.created_at DESC
+        LIMIT 100;
+    `;
+    const result = await pool.query(query, [repoId, userId]);
+    return result.rows;
+}

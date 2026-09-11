@@ -12,6 +12,7 @@ import {
     createGithubWebhook,
     deleteGithubWebhook,
 } from "../services/githubService.js";
+import { getSignalsByRepoId } from "../db/queries/signalQueries.js";
 
 const getAllRepos = async (req: AuthRequest, res: express.Response) => {
     try {
@@ -247,4 +248,30 @@ const deleteRepo = async (req: AuthRequest, res: express.Response) => {
     }
 };
 
-export { getAllRepos, getRepoDetails, createRepository, deleteRepo };
+const getRepoSignals = async (req: AuthRequest, res: express.Response) => {
+    try {
+        const userId = req.userId;
+        if (!userId) {
+            return res.status(401).json({ message: "Not Authorized" });
+        }
+
+        const repoId = req.params.id;
+        if (!repoId || typeof repoId !== "string") {
+            return res.status(400).json({ message: "Invalid or missing repository ID" });
+        }
+
+        // Verify the repo exists and belongs to this user before fetching signals
+        const repo = await getRepoDetailsById(repoId, userId);
+        if (!repo) {
+            return res.status(404).json({ message: "Repository not found" });
+        }
+
+        const signals = await getSignalsByRepoId(repoId, userId);
+        return res.status(200).json(signals);
+    } catch (err) {
+        console.error("Error while fetching repo signals", err);
+        return res.status(500).json({ error: "Internal server error" });
+    }
+};
+
+export { getAllRepos, getRepoDetails, createRepository, deleteRepo, getRepoSignals };
