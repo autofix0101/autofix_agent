@@ -3,6 +3,21 @@ import LoginPage from "./pages/LoginPage";
 import ReposPage from "./pages/ReposPage";
 import RepoDetailPage from "./pages/RepoDetailPage";
 import ProtectedRoute from "./components/ProtectedRoute";
+import Sidebar from "./components/Sidebar";
+import { useAuth } from "./context/AuthContext";
+
+function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (!user) return <>{children}</>;
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", background: "#070b14" }}>
+      <Sidebar />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflowX: "hidden" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   return (
@@ -12,7 +27,9 @@ export default function App() {
         path="/repos"
         element={
           <ProtectedRoute>
-            <ReposPage />
+            <AuthenticatedLayout>
+              <ReposPage />
+            </AuthenticatedLayout>
           </ProtectedRoute>
         }
       />
@@ -20,7 +37,9 @@ export default function App() {
         path="/repos/:id"
         element={
           <ProtectedRoute>
-            <RepoDetailPage />
+            <AuthenticatedLayout>
+              <RepoDetailPage />
+            </AuthenticatedLayout>
           </ProtectedRoute>
         }
       />
