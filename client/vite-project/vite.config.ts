@@ -23,6 +23,16 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      "/signals": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+        secure: false,
+      },
+      "/webhooks": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
 });

@@ -28,6 +28,7 @@ export interface RepoDetail {
   default_branch: string;
   is_private: boolean;
   last_commit_sha: string | null;
+  github_webhook_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -52,4 +53,47 @@ export interface AddRepoBody {
   htmlUrl: string;
   defaultBranch: string;
   isPrivate: boolean;
+}
+
+// Signal from GET /repositories/:id/signals
+export interface Signal {
+  id: string;
+  type: "github_issue" | "ci_failure";
+  source_ref: string;
+  status: "open" | "in_progress" | "resolved" | "ignored";
+  parsed_data: IssueSignalData | CiFailureSignalData;
+  raw_content: string;
+  created_at: string;
+}
+
+export interface IssueSignalData {
+  title: string;
+  body: string | null;
+  url: string;
+  number: number;
+  author: string | null;
+  labels: string[];
+  action: string;
+  repository_full_name: string | null;
+}
+
+export interface CiFailureSignalData {
+  workflow_name: string;
+  run_id: number;
+  run_number: number;
+  branch: string;
+  head_sha: string;
+  conclusion: string;
+  html_url: string;
+  event: string;
+  actor: string | null;
+  repository_full_name: string | null;
+}
+
+// SSE event pushed from /signals/stream
+export interface SignalEvent {
+  repoId: string;
+  signalId: string;
+  type: "github_issue" | "ci_failure";
+  title: string;
 }
