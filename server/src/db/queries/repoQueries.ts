@@ -27,7 +27,7 @@ export async function getAllUserRepos(userId: string) {
 //get repo details
 export async function getRepoDetailsById(repoId: string, userId: string) {
     const query = `
-        SELECT id,github_repo_id,name,owner,clone_url,html_url,default_branch,is_private,last_commit_sha,created_at,updated_at
+        SELECT id,github_repo_id,name,owner,clone_url,html_url,default_branch,is_private,last_commit_sha,github_webhook_id,created_at,updated_at
         FROM repositories
         WHERE id = $1 AND user_id = $2;
     `;
@@ -70,3 +70,20 @@ export async function deleteRepoById(repoId: string, userId: string) {
     const result = await pool.query(query, [repoId, userId]);
     return result.rows[0] ?? null;
 }
+
+/**
+ * Persist the GitHub-assigned webhook ID after createGithubWebhook succeeds.
+ * The stored ID is later used by deleteRepo for webhook cleanup on disconnect.
+ */
+export async function updateRepoWebhookId(repoId: string, webhookId: number) {
+    const query = `
+        UPDATE repositories
+        SET github_webhook_id = $2,
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING id, github_webhook_id;
+    `;
+    const result = await pool.query(query, [repoId, webhookId]);
+    return result.rows[0] ?? null;
+}
+
