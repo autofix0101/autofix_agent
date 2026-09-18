@@ -34,7 +34,7 @@ from .db.connection import close_pool
 from .db import queries
 from .github import client as gh
 from .chunker.ast_chunker import chunk_file, is_indexable
-from .embedder.openai_embedder import embed_chunks
+from .embedder.gemini_embedder import embed_chunks
 from .models import CodeChunk
 
 load_dotenv()
@@ -126,10 +126,9 @@ async def full_index(
     logger.info("Found %d indexable file(s) out of %d total", len(indexable), len(all_paths))
 
     for path in indexable:
-        try:
-            await _index_single_file(http, repo, path, head_sha)
-        except Exception:
-            logger.exception("Error indexing %s — skipping file", path)
+        # Let exceptions propagate — any failure aborts the run and
+        # prevents last_commit_sha from being updated.
+        await _index_single_file(http, repo, path, head_sha)
 
 
 # ---------------------------------------------------------------------------
@@ -166,31 +165,28 @@ async def incremental_index(
         path = diff_file.path
         status = diff_file.status
 
-        try:
-            if status == "removed":
-                # Delete the file record; code_chunks cascade automatically
-                await queries.delete_file(repo_id, path)
-                logger.info("Removed   %s", path)
+        if status == "removed":
+            # Delete the file record; code_chunks cascade automatically
+            await queries.delete_file(repo_id, path)
+            logger.info("Removed   %s", path)
 
-            elif status == "renamed" and diff_file.previous_path:
-                # Remove old path, then index under the new path
-                await queries.delete_file(repo_id, diff_file.previous_path)
-                logger.info("Removed old path  %s", diff_file.previous_path)
-                if is_indexable(path):
-                    await _index_single_file(http, repo, path, head_sha)
+        elif status == "renamed" and diff_file.previous_path:
+            # Remove old path, then index under the new path
+            await queries.delete_file(repo_id, diff_file.previous_path)
+            logger.info("Removed old path  %s", diff_file.previous_path)
+            if is_indexable(path):
+                await _index_single_file(http, repo, path, head_sha)
 
-            elif status in ("added", "modified", "changed", "copied"):
-                if is_indexable(path):
-                    await _index_single_file(http, repo, path, head_sha)
-                else:
-                    logger.debug("Skipping non-indexable changed file: %s", path)
-
+        elif status in ("added", "modified", "changed", "copied"):
+            if is_indexable(path):
+                await _index_single_file(http, repo, path, head_sha)
             else:
-                # unchanged / unknown — nothing to do
-                logger.debug("Skipping status=%s for %s", status, path)
+                logger.debug("Skipping non-indexable changed file: %s", path)
 
-        except Exception:
-            logger.exception("Error processing diff file %s (status=%s) — skipping", path, status)
+        else:
+            # unchanged / unknown — nothing to do
+            logger.debug("Skipping status=%s for %s", status, path)
+
 
 
 # ---------------------------------------------------------------------------

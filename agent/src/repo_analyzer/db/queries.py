@@ -136,6 +136,21 @@ async def delete_chunks_for_file(file_id: str) -> None:
     )
 
 
+def _to_pgvector(embedding: list[float] | None) -> str | None:
+    """
+    Convert a Python list of floats to the pgvector string literal format.
+
+    asyncpg does not have a built-in codec for the pgvector type, so we
+    serialise the vector ourselves as "[x,y,z,...]" which PostgreSQL's
+    `::vector` cast can then parse correctly.
+
+    Returns None when embedding is absent (column will be NULL).
+    """
+    if embedding is None:
+        return None
+    return "[" + ",".join(str(v) for v in embedding) + "]"
+
+
 async def insert_code_chunks(
     file_id: str,
     chunks: list[dict[str, Any]],
@@ -162,8 +177,10 @@ async def insert_code_chunks(
             c["language"],
             c["content"],
             c["content_hash"],
-            # pgvector expects a Python list; asyncpg passes it as an array literal
-            c.get("embedding"),
+            # asyncpg cannot serialise list[float] directly into pgvector.
+            # Cast to the "[x,y,z]" string representation that the
+            # `$10::vector` cast in the SQL can then parse correctly.
+            _to_pgvector(c.get("embedding")),
         )
         for c in chunks
     ]
