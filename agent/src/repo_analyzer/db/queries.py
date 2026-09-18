@@ -1,12 +1,3 @@
-"""
-All SQL queries used by the Repo Analyzer Agent.
-
-Tables touched:
-  - repositories      (read last_commit_sha, update it on success)
-  - users             (read github_access_token)
-  - files             (upsert / delete)
-  - code_chunks       (insert / delete — cascade handled by FK)
-"""
 from __future__ import annotations
 
 from typing import Any
@@ -22,10 +13,6 @@ from .connection import get_pool
 async def get_repo_for_indexing(repo_id: str) -> dict[str, Any] | None:
     """
     Fetch everything the agent needs to index a repository.
-
-    Returns a dict with keys:
-        id, owner, name, default_branch, last_commit_sha, github_access_token
-    or None if the repo is not found.
     """
     pool = await get_pool()
     row = await pool.fetchrow(
@@ -47,10 +34,6 @@ async def get_repo_for_indexing(repo_id: str) -> dict[str, Any] | None:
 
 
 async def update_last_commit_sha(repo_id: str, sha: str) -> None:
-    """
-    Persist the new head SHA after a successful indexing run.
-    Only called when indexing completes without error.
-    """
     pool = await get_pool()
     await pool.execute(
         """
@@ -74,10 +57,6 @@ async def upsert_file(
     language: str | None,
     content_hash: str,
 ) -> str:
-    """
-    Insert or update a file record.  Returns the file UUID.
-    On conflict (same repo + path) the language and content_hash are refreshed.
-    """
     pool = await get_pool()
     row = await pool.fetchrow(
         """
@@ -127,7 +106,6 @@ async def get_file_paths_for_repo(repo_id: str) -> list[str]:
 async def delete_chunks_for_file(file_id: str) -> None:
     """
     Remove all code chunks for a file before re-inserting fresh ones.
-    Called before indexing a changed (or newly scanned) file.
     """
     pool = await get_pool()
     await pool.execute(
@@ -139,12 +117,6 @@ async def delete_chunks_for_file(file_id: str) -> None:
 def _to_pgvector(embedding: list[float] | None) -> str | None:
     """
     Convert a Python list of floats to the pgvector string literal format.
-
-    asyncpg does not have a built-in codec for the pgvector type, so we
-    serialise the vector ourselves as "[x,y,z,...]" which PostgreSQL's
-    `::vector` cast can then parse correctly.
-
-    Returns None when embedding is absent (column will be NULL).
     """
     if embedding is None:
         return None
@@ -157,12 +129,6 @@ async def insert_code_chunks(
 ) -> None:
     """
     Bulk-insert code chunks for a file.
-
-    Each chunk dict must contain:
-        chunk_key, symbol_name, chunk_type, start_line, end_line,
-        language, content, content_hash, embedding (list[float] | None)
-
-    Uses executemany for efficiency.
     """
     pool = await get_pool()
 

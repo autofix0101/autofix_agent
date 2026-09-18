@@ -1,9 +1,5 @@
 """
 AST-based code chunker — language dispatcher.
-
-Detects language from file extension and delegates to the appropriate
-language-specific chunker.  Falls back to the generic sliding-window
-chunker for unsupported extensions.
 """
 from __future__ import annotations
 

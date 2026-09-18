@@ -13,7 +13,6 @@ _pool: asyncpg.Pool | None = None
 
 
 async def get_pool() -> asyncpg.Pool:
-    """Return the shared connection pool, creating it on first call."""
     global _pool
     if _pool is None:
         database_url = os.environ["DATABASE_URL"]
@@ -22,7 +21,6 @@ async def get_pool() -> asyncpg.Pool:
 
 
 async def close_pool() -> None:
-    """Close the pool on shutdown."""
     global _pool
     if _pool is not None:
         await _pool.close()

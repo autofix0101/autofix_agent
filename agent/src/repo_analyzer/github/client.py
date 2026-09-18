@@ -1,8 +1,6 @@
 """
 GitHub REST API client for the Repo Analyzer Agent.
 
-All calls are authenticated with the repository owner's stored access token.
-Uses httpx (async) with a shared client per indexing run.
 """
 from __future__ import annotations
 

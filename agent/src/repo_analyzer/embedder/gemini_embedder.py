@@ -1,14 +1,3 @@
-"""
-Gemini embedding generator for code chunks.
-
-Uses Google's text-embedding-004 model (768 dimensions) — matches the
-VECTOR(768) column in code_chunks.embedding (migration 009).
-
-Processes chunks in batches of 100 (Gemini's per-request limit for
-embedContent with multiple inputs).
-
-Requires GEMINI_API_KEY in the environment.
-"""
 from __future__ import annotations
 
 import logging
@@ -21,9 +10,9 @@ from ..models import CodeChunk
 
 logger = logging.getLogger(__name__)
 
-_EMBEDDING_MODEL = "text-embedding-004"
+_EMBEDDING_MODEL = "gemini-embedding-001"
 _BATCH_SIZE = 100          # Gemini embedContent supports up to 100 inputs per call
-_EMBEDDING_DIM = 768       # must match VECTOR(768) in schema (migration 009)
+_EMBEDDING_DIM = 1536       
 
 
 def _get_client() -> genai.Client:
@@ -65,6 +54,7 @@ async def embed_chunks(chunks: list[CodeChunk]) -> list[CodeChunk]:
             contents=texts,
             config=types.EmbedContentConfig(
                 task_type="RETRIEVAL_DOCUMENT",
+                output_dimensionality=1536,
             ),
         )
 

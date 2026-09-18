@@ -1,8 +1,5 @@
 """
 Generic fallback chunker for unsupported languages.
-
-Splits source text into overlapping fixed-size windows so that no code
-is left un-indexed even without a language-specific parser.
 """
 from __future__ import annotations
 

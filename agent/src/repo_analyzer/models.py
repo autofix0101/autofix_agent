@@ -9,16 +9,6 @@ from dataclasses import dataclass, field
 
 @dataclass
 class CodeChunk:
-    """
-    Represents a single logical code unit extracted from a source file.
-
-    chunk_key   — stable identifier: "{file_path}::{symbol_name}::{chunk_type}"
-                  (or positional for generic blocks)
-    content     — contextual text sent to the embedding model; includes
-                  file path + symbol header so the vector captures location.
-    content_hash — sha256 of *content*, stored in DB for future change detection.
-    embedding   — populated by the embedder after the chunk is created.
-    """
     chunk_key: str
     symbol_name: str | None
     chunk_type: str          # function | class | interface | type | module | block

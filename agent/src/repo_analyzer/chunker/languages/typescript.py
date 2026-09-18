@@ -1,9 +1,6 @@
 """
 TypeScript / TSX / JavaScript AST chunker using tree-sitter-typescript
 and tree-sitter-javascript.
-
-Extracts functions, classes, interfaces, type aliases, and arrow functions
-assigned to variables as individual chunks.
 """
 from __future__ import annotations
 

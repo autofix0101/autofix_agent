@@ -1,8 +1,5 @@
 """
 Python AST chunker using tree-sitter-python.
-
-Extracts top-level and class-nested functions and classes as individual chunks.
-Falls back to the generic chunker for files that fail to parse.
 """
 from __future__ import annotations
 
