@@ -1,0 +1,180 @@
+"""
+AutoFix Pipeline Orchestrator.
+
+Stages per fix_job:
+  1. reindexing  — GitHub pull + incremental re-index (only changed files)
+  2. localizing  — stack trace direct match + pgvector similarity search
+  3. generating  — LLM tool-calling loop produces unified git diff
+  4. validating  — apply patch in sandbox clone, run test suite
+  5. retry       — up to MAX_VALIDATION_ATTEMPTS on failure
+  6. awaiting_approval — frontend shows diff for human review
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from . import db
+from .config import settings
+from .generation.agent_loop import run_generation_loop
+from .indexing.indexer import run_indexing
+from .localization.ranker import localize_and_rank
+from .signals.issue_preprocessor import preprocess_signal_content
+from .utils.logging import get_logger
+from .validation.patch_apply import apply_patch
+from .validation.sandbox import Sandbox
+from .validation.test_runners import run_tests_in_directory
+
+logger = get_logger("pipeline")
+
+
+async def run_pipeline(job: dict[str, Any]) -> None:
+    """Execute all pipeline stages for a claimed fix_job."""
+    job_id = str(job["id"])
+    repo_id = str(job["repo_id"])
+    signal_id = str(job["signal_id"]) if job.get("signal_id") else None
+
+    logger.info(">>> Starting pipeline for Job #%s (Repo #%s)", job_id, repo_id)
+
+    # Load signal (raw_content + parsed data)
+    signal_row = await db.get_signal(signal_id) if signal_id else None
+    raw_content = signal_row.get("raw_content", "") if signal_row else ""
+    signal_title = signal_row.get("source_ref", "") if signal_row else ""
+
+    try:
+        # ==================================================================
+        # STAGE 1: REINDEXING
+        # ==================================================================
+        await db.update_job_status(job_id, status="reindexing")
+        await db.add_job_event(job_id, "reindexing", "Pulling latest code and running incremental re-index.")
+
+        logger.info("[Job %s] Stage: reindexing", job_id)
+        try:
+            head_sha = await run_indexing(repo_id)
+            await db.add_job_event(job_id, "reindexing", f"Indexing complete. HEAD={head_sha[:8]}")
+        except Exception as e:
+            logger.warning("[Job %s] Indexing failed (continuing with existing index): %s", job_id, e)
+            await db.add_job_event(job_id, "reindexing", f"Indexing skipped: {e}")
+
+        # ==================================================================
+        # STAGE 2: LOCALIZING
+        # ==================================================================
+        await db.update_job_status(job_id, status="localizing")
+        await db.add_job_event(job_id, "localizing", "Analyzing bug signal and finding candidate code chunks.")
+
+        logger.info("[Job %s] Stage: localizing", job_id)
+        preprocessed = preprocess_signal_content(raw_content, title=signal_title)
+        candidates = await localize_and_rank(repo_id, job_id, preprocessed, limit=10)
+
+        if candidates:
+            top = candidates[0]
+            await db.add_job_event(
+                job_id, "localizing",
+                f"Top candidate: {top['file_path']} (score={top.get('score', 0):.2f}, method={top.get('method')})"
+            )
+        else:
+            logger.warning("[Job %s] No candidates found — using empty fallback", job_id)
+            await db.add_job_event(job_id, "localizing", "No localization candidates found.")
+
+        # ==================================================================
+        # STAGES 3 & 4: GENERATING + VALIDATING (with retry)
+        # ==================================================================
+        max_attempts = settings.MAX_VALIDATION_ATTEMPTS
+        attempt = 1
+        validation_passed = False
+        last_log = None
+        successful_patch_id = None
+
+        # We need the repo local path for sandbox — try to clone url from DB
+        repo_row = await db.get_repo_for_indexing(repo_id)
+        clone_url = repo_row.get("clone_url", "") if repo_row else ""
+        branch = repo_row.get("default_branch", "main") if repo_row else "main"
+
+        import os, tempfile
+        sandbox_source = tempfile.mkdtemp(prefix="autofix_repo_")
+        try:
+            # Shallow clone for sandbox base
+            import subprocess
+            logger.info("[Job %s] Cloning repo for sandbox: %s", job_id, clone_url)
+            if clone_url:
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", "--branch", branch, clone_url, sandbox_source],
+                    check=True, capture_output=True
+                )
+        except Exception as e:
+            logger.warning("[Job %s] Could not clone repo for sandbox (%s); validation will skip test run.", job_id, e)
+
+        while attempt <= max_attempts and not validation_passed:
+            logger.info("[Job %s] Stage: generating (attempt %d/%d)", job_id, attempt, max_attempts)
+            await db.update_job_status(job_id, status="generating", attempt_count=attempt)
+            await db.add_job_event(job_id, "generating", f"LLM generating patch (attempt {attempt}/{max_attempts}).")
+
+            patch_result = await run_generation_loop(
+                job_id=job_id,
+                repo_path=sandbox_source,
+                signal=preprocessed,
+                candidates=candidates,
+                attempt_number=attempt,
+                previous_validation_log=last_log,
+            )
+            patch_id = patch_result["patch_id"]
+            diff_content = patch_result["diff_content"]
+
+            if not diff_content or not diff_content.strip():
+                last_log = "Error: Generated patch was empty."
+                await db.update_patch_validation(patch_id, False, last_log)
+                attempt += 1
+                continue
+
+            # Validate patch in sandbox
+            logger.info("[Job %s] Stage: validating (attempt %d/%d)", job_id, attempt, max_attempts)
+            await db.update_job_status(job_id, status="validating")
+            await db.add_job_event(job_id, "validating", f"Testing patch #{patch_id} in isolated sandbox.")
+
+            with Sandbox(sandbox_source) as sandbox_path:
+                apply_ok, apply_msg = apply_patch(sandbox_path, diff_content)
+                if not apply_ok:
+                    validation_passed = False
+                    last_log = f"Patch apply failed:\n{apply_msg}"
+                else:
+                    test_ok, test_log = run_tests_in_directory(sandbox_path)
+                    validation_passed = test_ok
+                    last_log = test_log
+
+            await db.update_patch_validation(patch_id, validation_passed, last_log)
+
+            if validation_passed:
+                successful_patch_id = patch_id
+                logger.info("[Job %s] Patch %s PASSED validation on attempt %d!", job_id, patch_id, attempt)
+                break
+            else:
+                logger.warning("[Job %s] Patch %s FAILED on attempt %d.", job_id, patch_id, attempt)
+                await db.add_job_event(
+                    job_id, "validating",
+                    f"Attempt {attempt} failed: {(last_log or '')[:150]}"
+                )
+                attempt += 1
+
+        # Cleanup temp clone
+        import shutil
+        shutil.rmtree(sandbox_source, ignore_errors=True)
+
+        # ==================================================================
+        # STAGE 5: FINALIZATION
+        # ==================================================================
+        if validation_passed and successful_patch_id:
+            await db.update_job_status(job_id, status="awaiting_approval")
+            await db.add_job_event(
+                job_id, "awaiting_approval",
+                f"Patch #{successful_patch_id} verified. Awaiting human approval."
+            )
+            logger.info(">>> Job %s complete → awaiting_approval", job_id)
+        else:
+            err = f"All {max_attempts} attempts failed. Last log:\n{(last_log or '')[:300]}"
+            await db.update_job_status(job_id, status="failed", error_message=err[:500])
+            await db.add_job_event(job_id, "failed", err[:250])
+            logger.error(">>> Job %s FAILED after %d attempts.", job_id, max_attempts)
+
+    except Exception as e:
+        logger.exception("[Job %s] Unhandled pipeline exception: %s", job_id, e)
+        await db.update_job_status(job_id, status="failed", error_message=str(e)[:500])
+        await db.add_job_event(job_id, "failed", f"Unhandled exception: {e}")
