@@ -48,12 +48,12 @@ TypeError: Cannot read properties of undefined at createNote (services/noteServi
 
         self.assertTrue(len(candidates) >= 2)
         # Direct match should be ranked #1
-        self.assertEqual(candidates[0]["chunk_id"], 101)
+        self.assertEqual(str(candidates[0]["chunk_id"]), "101")
         self.assertEqual(candidates[0]["rank"], 1)
         self.assertEqual(candidates[0]["method"], "stack_trace_direct")
 
         # Vector match ranked #2
-        self.assertEqual(candidates[1]["chunk_id"], 102)
+        self.assertEqual(str(candidates[1]["chunk_id"]), "102")
         self.assertEqual(candidates[1]["rank"], 2)
 
 

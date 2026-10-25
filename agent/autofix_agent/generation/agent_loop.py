@@ -96,6 +96,7 @@ Please inspect the code using your tools, identify the bug, and propose a surgic
 
         tool_calls = resp.get("tool_calls", [])
         if tool_calls:
+            logger.info("[Job %s] Turn %d: LLM called tools: %s", job_id, turn + 1, [tc["name"] for tc in tool_calls])
             assistant_msg["tool_calls"] = [
                 {
                     "id": tc["id"],
@@ -114,6 +115,7 @@ Please inspect the code using your tools, identify the bug, and propose a surgic
                 args = tc["arguments"]
 
                 if name == "propose_patch":
+                    logger.info("[Job %s] LLM proposed a patch for %s", job_id, args.get("file_path"))
                     proposed_patch = {
                         "file_path": args.get("file_path", ""),
                         "diff_content": args.get("diff_content", ""),
@@ -122,6 +124,7 @@ Please inspect the code using your tools, identify the bug, and propose a surgic
                     tool_output = "Patch proposed and captured."
                 else:
                     tool_output = executor.execute_tool_call(name, args)
+                    logger.info("[Job %s] Executed tool %s -> %s", job_id, name, tool_output[:80].replace("\n", " "))
 
                 messages.append({
                     "role": "tool",
@@ -132,6 +135,8 @@ Please inspect the code using your tools, identify the bug, and propose a surgic
             if proposed_patch:
                 break
         else:
+            content = resp.get("content", "")
+            logger.info("[Job %s] Turn %d: LLM text response: %s", job_id, turn + 1, content[:150].replace("\n", " "))
             messages.append(assistant_msg)
             # Check if LLM outputted raw diff in text content
             content = resp.get("content", "")

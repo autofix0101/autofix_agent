@@ -37,8 +37,12 @@ class LLMClient:
         Send messages and tool definitions to the LLM.
         Returns response structure: {"content": str | None, "tool_calls": list}
         """
+        if not AsyncGroq:
+            raise EnvironmentError("The 'groq' Python package is not installed. Please run: pip install groq")
+        if not settings.GROQ_API_KEY:
+            raise EnvironmentError("GROQ_API_KEY is not configured in .env.")
         if not self._groq_client:
-            raise EnvironmentError("GROQ_API_KEY is not configured or groq package not installed.")
+            raise EnvironmentError("Failed to initialize Groq client.")
 
         response = await self._groq_client.chat.completions.create(
             model=self.model,
