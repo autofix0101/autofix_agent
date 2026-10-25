@@ -196,6 +196,115 @@ def parse_js_traceback(text: str) -> ParsedStackTrace | None:
 
 
 # ---------------------------------------------------------------------------
+# Go Panic / Traceback Parser
+# ---------------------------------------------------------------------------
+
+_GO_FRAME_FILE_RE = re.compile(r"^\t(?P<file>[^\s:]+\.go):(?P<line>\d+)(?:\s+\+0x[0-9a-fA-F]+)?", re.MULTILINE)
+_GO_PANIC_RE = re.compile(r"panic:\s*(.*)")
+
+
+def parse_go_traceback(text: str) -> ParsedStackTrace | None:
+    if "panic:" not in text and ".go:" not in text and "goroutine " not in text:
+        return None
+
+    frames: list[StackFrame] = []
+    lines = text.splitlines()
+
+    for i, line in enumerate(lines):
+        m = _GO_FRAME_FILE_RE.search(line)
+        if m:
+            fp = m.group("file").strip()
+            ln = int(m.group("line"))
+            fn = None
+            if i > 0:
+                prev = lines[i - 1].strip()
+                if "(" in prev and not prev.startswith("goroutine "):
+                    fn = prev.split("(")[0].strip()
+
+            frames.append(
+                StackFrame(
+                    file_path=fp,
+                    line_number=ln,
+                    function_name=fn,
+                    is_app_code=_is_app_frame(fp),
+                )
+            )
+
+    if not frames:
+        return None
+
+    error_type = "Panic"
+    error_message = ""
+    panic_m = _GO_PANIC_RE.search(text)
+    if panic_m:
+        error_message = panic_m.group(1).strip()
+
+    app_frames = [f for f in frames if f.is_app_code]
+    primary = app_frames[0] if app_frames else frames[0]
+
+    return ParsedStackTrace(
+        error_type=error_type,
+        error_message=error_message,
+        raw_trace=text.strip(),
+        frames=frames,
+        primary_frame=primary,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Java Exception Stack Trace Parser
+# ---------------------------------------------------------------------------
+
+_JAVA_FRAME_RE = re.compile(
+    r"^\s*at\s+(?P<class>[a-zA-Z0-9_$]+(?:\.[a-zA-Z0-9_$]+)*)\.(?P<method>[a-zA-Z0-9_$<>]+)\((?P<file>[a-zA-Z0-9_]+\.java):(?P<line>\d+)\)",
+    re.MULTILINE,
+)
+_JAVA_ERROR_RE = re.compile(
+    r"^(?:Exception in thread \"[^\"]+\"\s+)?(?P<type>[a-zA-Z0-9_.]*(?:Exception|Error)):(?:\s*(?P<msg>.*))?$",
+    re.MULTILINE,
+)
+
+
+def parse_java_traceback(text: str) -> ParsedStackTrace | None:
+    matches = list(_JAVA_FRAME_RE.finditer(text))
+    if not matches:
+        return None
+
+    frames: list[StackFrame] = []
+    for m in matches:
+        fp = m.group("file").strip()
+        ln = int(m.group("line"))
+        fn = f"{m.group('class')}.{m.group('method')}"
+
+        frames.append(
+            StackFrame(
+                file_path=fp,
+                line_number=ln,
+                function_name=fn,
+                is_app_code=_is_app_frame(fp) and not fp.startswith("java/"),
+            )
+        )
+
+    error_type = "JavaException"
+    error_message = ""
+    err_match = _JAVA_ERROR_RE.search(text)
+    if err_match:
+        error_type = err_match.group("type").strip()
+        error_message = (err_match.group("msg") or "").strip()
+
+    app_frames = [f for f in frames if f.is_app_code]
+    primary = app_frames[0] if app_frames else (frames[0] if frames else None)
+
+    return ParsedStackTrace(
+        error_type=error_type,
+        error_message=error_message,
+        raw_trace=text.strip(),
+        frames=frames,
+        primary_frame=primary,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Unified Parser
 # ---------------------------------------------------------------------------
 
@@ -209,6 +318,14 @@ def parse_stack_trace(raw_text: str) -> ParsedStackTrace | None:
         return parsed
 
     parsed = parse_js_traceback(raw_text)
+    if parsed and parsed.frames:
+        return parsed
+
+    parsed = parse_go_traceback(raw_text)
+    if parsed and parsed.frames:
+        return parsed
+
+    parsed = parse_java_traceback(raw_text)
     if parsed and parsed.frames:
         return parsed
 

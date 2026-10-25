@@ -92,3 +92,65 @@ export class TaxManager {
   }
 }
 """
+
+GO_SOURCE_SAMPLE = """package payment
+
+import "fmt"
+
+// CalculateFee computes transaction fee.
+func CalculateFee(amount float64, rate *float64) (float64, error) {
+    if rate == nil {
+        return 0, fmt.Errorf("rate cannot be nil")
+    }
+    return amount * (*rate), nil
+}
+
+type PaymentGateway struct {
+    APIKey string
+}
+
+func (p *PaymentGateway) Process(amount float64) bool {
+    return true
+}
+"""
+
+JAVA_SOURCE_SAMPLE = """package com.example.payment;
+
+/**
+ * Payment processor service.
+ */
+public class PaymentProcessor {
+    private double defaultRate;
+
+    public PaymentProcessor(double defaultRate) {
+        this.defaultRate = defaultRate;
+    }
+
+    /**
+     * Calculates transaction fee.
+     */
+    public double calculateFee(double amount, Double rate) {
+        if (rate == null) {
+            throw new IllegalArgumentException("rate cannot be null");
+        }
+        return amount * rate;
+    }
+}
+"""
+
+GO_PANIC_SAMPLE = """
+panic: runtime error: invalid memory address or nil pointer dereference
+[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x10a4e80]
+
+goroutine 1 [running]:
+main.CalculateFee(0x408f400000000000, 0x0)
+\t/workspace/payment/processor.go:45 +0x24
+main.main()
+\t/workspace/main.go:12 +0x30
+"""
+
+JAVA_EXCEPTION_SAMPLE = """
+java.lang.NullPointerException: Cannot invoke "java.lang.Double.doubleValue()" because "rate" is null
+\tat com.example.payment.PaymentProcessor.calculateFee(PaymentProcessor.java:45)
+\tat com.example.payment.Application.main(Application.java:12)
+"""
