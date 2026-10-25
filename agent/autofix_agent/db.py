@@ -71,6 +71,7 @@ async def get_repo_for_indexing(repo_id: str) -> dict[str, Any] | None:
             r.id,
             r.owner,
             r.name,
+            r.clone_url,
             r.default_branch,
             r.last_commit_sha,
             u.github_access_token

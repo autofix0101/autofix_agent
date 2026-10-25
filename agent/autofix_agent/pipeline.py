@@ -88,18 +88,27 @@ async def run_pipeline(job: dict[str, Any]) -> None:
         repo_row = await db.get_repo_for_indexing(repo_id)
         clone_url = repo_row.get("clone_url", "") if repo_row else ""
         branch = repo_row.get("default_branch", "main") if repo_row else "main"
+        token = repo_row.get("github_access_token", "") if repo_row else ""
+
+        target_clone_url = clone_url
+        if token and clone_url.startswith("https://"):
+            target_clone_url = clone_url.replace("https://", f"https://x-access-token:{token}@")
 
         import os, tempfile
         sandbox_source = tempfile.mkdtemp(prefix="autofix_repo_")
         try:
             # Shallow clone for sandbox base
             import subprocess
-            logger.info("[Job %s] Cloning repo for sandbox: %s", job_id, clone_url)
-            if clone_url:
-                subprocess.run(
-                    ["git", "clone", "--depth", "1", "--branch", branch, clone_url, sandbox_source],
-                    check=True, capture_output=True
+            logger.info("[Job %s] Cloning repo for sandbox: %s (branch: %s)", job_id, clone_url, branch)
+            if target_clone_url:
+                proc = subprocess.run(
+                    ["git", "clone", "--depth", "1", "--branch", branch, target_clone_url, sandbox_source],
+                    capture_output=True, text=True
                 )
+                if proc.returncode != 0:
+                    logger.warning("[Job %s] git clone failed (code %d): %s", job_id, proc.returncode, proc.stderr)
+                else:
+                    logger.info("[Job %s] Repo cloned successfully into sandbox %s", job_id, sandbox_source)
         except Exception as e:
             logger.warning("[Job %s] Could not clone repo for sandbox (%s); validation will skip test run.", job_id, e)
 
