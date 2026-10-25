@@ -47,9 +47,10 @@ async def run_pipeline(job: dict[str, Any]) -> None:
         await db.update_job_status(job_id, status="reindexing")
         await db.add_job_event(job_id, "reindexing", "Pulling latest code and running incremental re-index.")
 
-        logger.info("[Job %s] Stage: reindexing", job_id)
+        logger.info("[Job %s] ---> STAGE 1: Reindexing repository...", job_id)
         try:
             head_sha = await run_indexing(repo_id)
+            logger.info("[Job %s] Indexing complete (HEAD=%s)", job_id, head_sha[:8])
             await db.add_job_event(job_id, "reindexing", f"Indexing complete. HEAD={head_sha[:8]}")
         except Exception as e:
             logger.warning("[Job %s] Indexing failed (continuing with existing index): %s", job_id, e)
@@ -61,11 +62,18 @@ async def run_pipeline(job: dict[str, Any]) -> None:
         await db.update_job_status(job_id, status="localizing")
         await db.add_job_event(job_id, "localizing", "Analyzing bug signal and finding candidate code chunks.")
 
-        logger.info("[Job %s] Stage: localizing", job_id)
+        logger.info("[Job %s] ---> STAGE 2: Localizing bug signal...", job_id)
         preprocessed = preprocess_signal_content(raw_content, title=signal_title)
         candidates = await localize_and_rank(repo_id, job_id, preprocessed, limit=10)
 
         if candidates:
+            logger.info("[Job %s] Localization found %d candidate(s):", job_id, len(candidates))
+            for c in candidates[:3]:
+                logger.info(
+                    "[Job %s]   Rank #%d: %s (lines %d-%d, score=%.2f, method=%s)",
+                    job_id, c.get("rank", 1), c["file_path"], c.get("start_line", 1),
+                    c.get("end_line", 1), c.get("score", 0), c.get("method", "unknown")
+                )
             top = candidates[0]
             await db.add_job_event(
                 job_id, "localizing",
@@ -113,7 +121,7 @@ async def run_pipeline(job: dict[str, Any]) -> None:
             logger.warning("[Job %s] Could not clone repo for sandbox (%s); validation will skip test run.", job_id, e)
 
         while attempt <= max_attempts and not validation_passed:
-            logger.info("[Job %s] Stage: generating (attempt %d/%d)", job_id, attempt, max_attempts)
+            logger.info("[Job %s] ---> STAGE 3: Generating patch (attempt %d/%d)...", job_id, attempt, max_attempts)
             await db.update_job_status(job_id, status="generating", attempt_count=attempt)
             await db.add_job_event(job_id, "generating", f"LLM generating patch (attempt {attempt}/{max_attempts}).")
 
@@ -130,12 +138,22 @@ async def run_pipeline(job: dict[str, Any]) -> None:
 
             if not diff_content or not diff_content.strip():
                 last_log = "Error: Generated patch was empty."
+                logger.warning("[Job %s] LLM produced an empty patch on attempt %d.", job_id, attempt)
                 await db.update_patch_validation(patch_id, False, last_log)
+                await db.add_job_event(
+                    job_id, "generating",
+                    f"Attempt {attempt} failed: LLM produced empty patch. {patch_result.get('explanation', '')[:100]}"
+                )
                 attempt += 1
                 continue
 
+            logger.info(
+                "[Job %s] Patch #%s proposed for %s: %s",
+                job_id, patch_id, patch_result.get("file_path"), patch_result.get("explanation", "")[:80]
+            )
+
             # Validate patch in sandbox
-            logger.info("[Job %s] Stage: validating (attempt %d/%d)", job_id, attempt, max_attempts)
+            logger.info("[Job %s] ---> STAGE 4: Validating patch #%s in sandbox...", job_id, patch_id)
             await db.update_job_status(job_id, status="validating")
             await db.add_job_event(job_id, "validating", f"Testing patch #{patch_id} in isolated sandbox.")
 
@@ -144,6 +162,7 @@ async def run_pipeline(job: dict[str, Any]) -> None:
                 if not apply_ok:
                     validation_passed = False
                     last_log = f"Patch apply failed:\n{apply_msg}"
+                    logger.warning("[Job %s] Patch apply failed in sandbox: %s", job_id, apply_msg)
                 else:
                     test_ok, test_log = run_tests_in_directory(sandbox_path)
                     validation_passed = test_ok
@@ -153,10 +172,10 @@ async def run_pipeline(job: dict[str, Any]) -> None:
 
             if validation_passed:
                 successful_patch_id = patch_id
-                logger.info("[Job %s] Patch %s PASSED validation on attempt %d!", job_id, patch_id, attempt)
+                logger.info("[Job %s] [PASSED] Patch #%s PASSED validation on attempt %d!", job_id, patch_id, attempt)
                 break
             else:
-                logger.warning("[Job %s] Patch %s FAILED on attempt %d.", job_id, patch_id, attempt)
+                logger.warning("[Job %s] [FAILED] Patch #%s FAILED validation on attempt %d: %s", job_id, patch_id, attempt, (last_log or '')[:120])
                 await db.add_job_event(
                     job_id, "validating",
                     f"Attempt {attempt} failed: {(last_log or '')[:150]}"

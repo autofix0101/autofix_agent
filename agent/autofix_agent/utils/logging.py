@@ -37,4 +37,5 @@ def setup_logger(
 
 def get_logger(name: str) -> logging.Logger:
     """Get a child logger configured with standard settings."""
+    setup_logger("autofix_agent")
     return logging.getLogger(f"autofix_agent.{name}")

@@ -17,7 +17,7 @@ from .config import settings
 from .pipeline import run_pipeline
 from .utils.logging import get_logger, setup_logger
 
-logger = setup_logger("autofix_agent.worker")
+logger = get_logger("worker")
 
 _stop_requested = False
 
