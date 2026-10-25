@@ -54,6 +54,19 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "list_files",
+            "description": "List files in the repository or within a specific subdirectory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "directory": {"type": "string", "description": "Relative subdirectory path (optional, defaults to repo root)"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_related_tests",
             "description": "Find test files corresponding to a source file.",
             "parameters": {
@@ -173,6 +186,22 @@ class RepoToolExecutor:
 
         return "Related test files:\n" + "\n".join(found) if found else "No directly named test files found."
 
+    def list_files(self, directory: str = "") -> str:
+        target = self._resolve(directory) if directory else self.repo_path
+        if not os.path.isdir(target):
+            return f"Error: '{directory}' is not a directory."
+        file_list = []
+        for root, dirs, files in os.walk(target):
+            dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "venv", ".venv", "__pycache__", "dist", "build")]
+            for f in files:
+                rel = os.path.relpath(os.path.join(root, f), self.repo_path).replace("\\", "/")
+                file_list.append(rel)
+                if len(file_list) >= 100:
+                    break
+            if len(file_list) >= 100:
+                break
+        return "\n".join(file_list) if file_list else "No files found."
+
     def execute_tool_call(self, name: str, args: dict[str, Any]) -> str:
         """Dispatch tool name and return text response."""
         try:
@@ -180,6 +209,8 @@ class RepoToolExecutor:
                 return self.read_file(args.get("file_path", ""), args.get("start_line"), args.get("end_line"))
             elif name == "search_code":
                 return self.search_code(args.get("query", ""), args.get("path_filter"))
+            elif name == "list_files":
+                return self.list_files(args.get("directory", ""))
             elif name == "get_related_tests":
                 return self.get_related_tests(args.get("file_path", ""))
             elif name == "propose_patch":
