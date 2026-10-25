@@ -57,6 +57,14 @@ def run_tests_in_directory(
             test_cmd = "pytest"
         elif os.path.exists(os.path.join(directory, "package.json")):
             test_cmd = "npm test"
+        elif os.path.exists(os.path.join(directory, "go.mod")):
+            test_cmd = "go test ./..."
+        elif os.path.exists(os.path.join(directory, "pom.xml")):
+            mvn_cmd = "./mvnw" if os.path.exists(os.path.join(directory, "mvnw")) else "mvn"
+            test_cmd = f"{mvn_cmd} test"
+        elif os.path.exists(os.path.join(directory, "build.gradle")) or os.path.exists(os.path.join(directory, "build.gradle.kts")):
+            gradle_cmd = "./gradlew" if os.path.exists(os.path.join(directory, "gradlew")) else "gradle"
+            test_cmd = f"{gradle_cmd} test"
 
     # If no test runner found, pass on syntax validation
     if not test_cmd:

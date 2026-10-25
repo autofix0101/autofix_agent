@@ -156,6 +156,10 @@ class RepoToolExecutor:
             f"{base_name}.test.ts",
             f"{base_name}.spec.ts",
             f"{base_name}.test.js",
+            f"{base_name}_test.go",
+            f"{base_name}Test.java",
+            f"{base_name}Tests.java",
+            f"Test{base_name}.java",
         ]
 
         found = []
