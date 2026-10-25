@@ -158,10 +158,11 @@ async def run_indexing(repo_id: str) -> str:
     async with httpx.AsyncClient(timeout=30.0) as http:
         head_sha = await get_latest_commit_sha(http, owner, name, branch, token)
 
-        logger.info("Stored SHA : %s", stored_sha or "(none — full index)")
+        existing_files = await db.get_file_paths_for_repo(repo_id)
+        logger.info("Stored SHA : %s (Existing files in DB: %d)", stored_sha or "(none — full index)", len(existing_files))
         logger.info("Remote SHA : %s", head_sha)
 
-        if stored_sha is None:
+        if stored_sha is None or not existing_files:
             await full_index(http, repo, head_sha)
         elif stored_sha == head_sha:
             logger.info("Repository is up to date — nothing to do")
