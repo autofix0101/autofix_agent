@@ -4,7 +4,12 @@ Unit tests for Code Chunker.
 import unittest
 
 from autofix_agent.indexing.chunker import chunk_file_content, is_chunkable_file
-from tests.fixtures import PYTHON_SOURCE_SAMPLE, TYPESCRIPT_SOURCE_SAMPLE
+from tests.fixtures import (
+    PYTHON_SOURCE_SAMPLE,
+    TYPESCRIPT_SOURCE_SAMPLE,
+    GO_SOURCE_SAMPLE,
+    JAVA_SOURCE_SAMPLE,
+)
 
 
 class TestChunker(unittest.TestCase):
@@ -14,6 +19,7 @@ class TestChunker(unittest.TestCase):
         self.assertTrue(is_chunkable_file("src/app.py"))
         self.assertTrue(is_chunkable_file("components/Button.tsx"))
         self.assertTrue(is_chunkable_file("main.go"))
+        self.assertTrue(is_chunkable_file("PaymentProcessor.java"))
 
         self.assertFalse(is_chunkable_file("image.png"))
         self.assertFalse(is_chunkable_file("archive.zip"))
@@ -43,6 +49,31 @@ class TestChunker(unittest.TestCase):
         self.assertIn("File: services/taxCalculator.ts", calc_chunk.content)
         self.assertIn("Function: calculateTax", calc_chunk.content)
         self.assertTrue(len(calc_chunk.content_hash) == 64)
+
+    def test_chunk_go(self):
+        chunks = chunk_file_content(GO_SOURCE_SAMPLE, "payment/processor.go")
+        self.assertTrue(len(chunks) >= 2)
+
+        symbols = [c.symbol_name for c in chunks if c.symbol_name]
+        self.assertIn("CalculateFee", symbols)
+
+        fee_chunk = next(c for c in chunks if c.symbol_name == "CalculateFee")
+        self.assertIn("File: payment/processor.go", fee_chunk.content)
+        self.assertIn("CalculateFee", fee_chunk.content)
+        self.assertEqual(fee_chunk.language, "go")
+        self.assertTrue(len(fee_chunk.content_hash) == 64)
+
+    def test_chunk_java(self):
+        chunks = chunk_file_content(JAVA_SOURCE_SAMPLE, "com/example/payment/PaymentProcessor.java")
+        self.assertTrue(len(chunks) >= 2)
+
+        symbols = [c.symbol_name for c in chunks if c.symbol_name]
+        self.assertIn("PaymentProcessor", symbols)
+
+        proc_chunk = next(c for c in chunks if c.symbol_name == "PaymentProcessor")
+        self.assertIn("File: com/example/payment/PaymentProcessor.java", proc_chunk.content)
+        self.assertEqual(proc_chunk.language, "java")
+        self.assertTrue(len(proc_chunk.content_hash) == 64)
 
 
 if __name__ == "__main__":
