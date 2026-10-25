@@ -82,7 +82,58 @@ async def localize_and_rank(
                 candidates.append(vc)
 
     # -----------------------------------------------------------------------
-    # 3. Sort, rank, and persist
+    # 3. Mentioned symbols & files fallback
+    # -----------------------------------------------------------------------
+    if not candidates and signal.mentioned_symbols:
+        for sym in signal.mentioned_symbols[:3]:
+            symbol_rows = await db.find_chunk_by_symbol(repo_id, sym)
+            for s_row in symbol_rows:
+                cid = s_row["id"]
+                if cid not in seen_chunk_ids:
+                    seen_chunk_ids.add(cid)
+                    candidates.append({
+                        "chunk_id": str(cid),
+                        "file_path": s_row["file_path"],
+                        "start_line": s_row["start_line"],
+                        "end_line": s_row["end_line"],
+                        "content": s_row.get("content", ""),
+                        "score": 0.70,
+                        "method": "mentioned_symbol",
+                    })
+
+    # -----------------------------------------------------------------------
+    # 4. Keyword search fallback (when vector search returns empty)
+    # -----------------------------------------------------------------------
+    if not candidates:
+        import re
+        raw_text = f"{signal.title} {signal.cleaned_text}"
+        words = re.findall(r"\b[A-Za-z0-9_]{3,}\b", raw_text)
+        stopwords = {
+            "the", "and", "not", "with", "this", "that", "from", "for", "are",
+            "been", "was", "were", "when", "user", "attempts", "does", "after",
+            "being", "actual", "expected", "behavior", "should", "appear", "into"
+        }
+        meaningful_words = [w for w in words if w.lower() not in stopwords]
+        # Deduplicate while preserving order
+        unique_kws = list(dict.fromkeys(meaningful_words))
+        for kw in unique_kws[:4]:
+            kw_rows = await db.search_chunks_by_keyword(repo_id, kw, limit=3)
+            for kr in kw_rows:
+                cid = kr["id"]
+                if cid not in seen_chunk_ids:
+                    seen_chunk_ids.add(cid)
+                    candidates.append({
+                        "chunk_id": str(cid),
+                        "file_path": kr["file_path"],
+                        "start_line": kr["start_line"],
+                        "end_line": kr["end_line"],
+                        "content": kr.get("content", ""),
+                        "score": 0.55,
+                        "method": "keyword_search",
+                    })
+
+    # -----------------------------------------------------------------------
+    # 5. Sort, rank, and persist
     # -----------------------------------------------------------------------
     candidates.sort(key=lambda x: x["score"], reverse=True)
     ranked = candidates[:limit]
