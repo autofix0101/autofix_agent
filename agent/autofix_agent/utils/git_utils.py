@@ -142,6 +142,21 @@ def normalize_diff(diff_str: str) -> str:
     return "\n".join(repaired_lines) + "\n"
 
 
+def diff_changed_files(diff_str: str) -> list[str]:
+    """Repo-relative paths touched by a unified diff (added, modified or deleted)."""
+    paths: list[str] = []
+    for line in normalize_diff(diff_str).splitlines():
+        if line.startswith(("+++ ", "--- ")):
+            path = line[4:].split("\t")[0].strip()
+            if path == "/dev/null":
+                continue
+            if path.startswith(("a/", "b/")):
+                path = path[2:]
+            if path and path not in paths:
+                paths.append(path)
+    return paths
+
+
 def apply_patch_git(
     repo_path: str,
     patch_content: str,

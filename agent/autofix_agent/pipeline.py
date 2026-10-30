@@ -7,7 +7,8 @@ Stages per fix_job:
   3. generating  — LLM tool-calling loop produces unified git diff
   4. validating  — apply patch in sandbox clone, run test suite
   5. retry       — up to MAX_VALIDATION_ATTEMPTS on failure
-  6. awaiting_approval — frontend shows diff for human review
+  6. awaiting_approval — patch validated
+  7. pr_created — patch pushed to a new branch and PR opened as the repo owner
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ from typing import Any
 
 from . import db
 from .config import settings
+from .delivery import PullRequestError, create_pull_request_for_job
 from .generation.agent_loop import run_generation_loop
 from .indexing.indexer import run_indexing
 from .localization.ranker import localize_and_rank
@@ -182,27 +184,61 @@ async def run_pipeline(job: dict[str, Any]) -> None:
                 )
                 attempt += 1
 
-        # Cleanup temp clone
-        import shutil
-        shutil.rmtree(sandbox_source, ignore_errors=True)
+        try:
+            # ==================================================================
+            # STAGE 5: FINALIZATION
+            # ==================================================================
+            if validation_passed and successful_patch_id:
+                await db.update_job_status(job_id, status="awaiting_approval")
+                await db.add_job_event(
+                    job_id, "awaiting_approval",
+                    f"Patch #{successful_patch_id} verified. Opening pull request."
+                )
+                logger.info(">>> Job %s validated → awaiting_approval", job_id)
 
-        # ==================================================================
-        # STAGE 5: FINALIZATION
-        # ==================================================================
-        if validation_passed and successful_patch_id:
-            await db.update_job_status(job_id, status="awaiting_approval")
-            await db.add_job_event(
-                job_id, "awaiting_approval",
-                f"Patch #{successful_patch_id} verified. Awaiting human approval."
-            )
-            logger.info(">>> Job %s complete → awaiting_approval", job_id)
-        else:
-            err = f"All {max_attempts} attempts failed. Last log:\n{(last_log or '')[:300]}"
-            await db.update_job_status(job_id, status="failed", error_message=err[:500])
-            await db.add_job_event(job_id, "failed", err[:250])
-            logger.error(">>> Job %s FAILED after %d attempts.", job_id, max_attempts)
+                # ==============================================================
+                # STAGE 6: PULL REQUEST
+                # ==============================================================
+                # sandbox_source is still a pristine clone of the default branch
+                # (generation only reads it; validation ran on a copy).
+                logger.info("[Job %s] ---> STAGE 6: Creating pull request...", job_id)
+                try:
+                    pr_url = await create_pull_request_for_job(
+                        job_id=job_id,
+                        patch_id=successful_patch_id,
+                        repo_path=sandbox_source,
+                        repo_row=repo_row or {},
+                        signal_row=signal_row,
+                    )
+                except PullRequestError as e:
+                    # Keep the job in awaiting_approval: the validated patch is still usable.
+                    logger.error("[Job %s] Pull request creation failed: %s", job_id, e)
+                    await db.update_job_status(
+                        job_id, status="awaiting_approval",
+                        error_message=f"PR creation failed: {e}"[:500],
+                    )
+                    await db.add_job_event(job_id, "pr_failed", f"PR creation failed: {str(e)[:250]}")
+                else:
+                    if pr_url:
+                        await db.add_job_event(job_id, "pr_created", f"Pull request opened: {pr_url}")
+                        logger.info(">>> Job %s complete → pr_created (%s)", job_id, pr_url)
+                    else:
+                        await db.add_job_event(job_id, "awaiting_approval", "PR preconditions not met; no PR opened.")
+            else:
+                err = f"All {max_attempts} attempts failed. Last log:\n{(last_log or '')[:300]}"
+                await db.update_job_status(job_id, status="failed", error_message=err[:500])
+                await db.add_job_event(job_id, "failed", err[:250])
+                if signal_id:
+                    await db.update_signal_status(signal_id, "failed")
+                logger.error(">>> Job %s FAILED after %d attempts.", job_id, max_attempts)
+        finally:
+            # Cleanup temp clone
+            import shutil
+            shutil.rmtree(sandbox_source, ignore_errors=True)
 
     except Exception as e:
         logger.exception("[Job %s] Unhandled pipeline exception: %s", job_id, e)
         await db.update_job_status(job_id, status="failed", error_message=str(e)[:500])
         await db.add_job_event(job_id, "failed", f"Unhandled exception: {e}")
+        if signal_id:
+            await db.update_signal_status(signal_id, "failed")

@@ -74,7 +74,9 @@ async def get_repo_for_indexing(repo_id: str) -> dict[str, Any] | None:
             r.clone_url,
             r.default_branch,
             r.last_commit_sha,
-            u.github_access_token
+            u.github_access_token,
+            u.github_id,
+            u.github_username
         FROM repositories r
         JOIN users u ON u.id = r.user_id
         WHERE r.id = $1
@@ -513,3 +515,83 @@ async def update_patch_validation(
         """,
         patch_id, validation_passed, validation_log,
     )
+
+
+# ---------------------------------------------------------------------------
+# Signals
+# ---------------------------------------------------------------------------
+
+async def update_signal_status(signal_id: str, status: str) -> None:
+    """Set signals.status ('open' | 'in_progress' | 'resolved' | 'failed')."""
+    pool = await get_pool()
+    await pool.execute(
+        "UPDATE signals SET status = $2 WHERE id = $1",
+        signal_id, status,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pull Requests
+# ---------------------------------------------------------------------------
+
+async def get_pr_eligible_patch(job_id: str, patch_id: str) -> dict[str, Any] | None:
+    """
+    Return the patch only if every PR precondition holds:
+      1. the fix_jobs row exists,
+      2. the patches row exists and belongs to that job,
+      3. patches.validation_passed = TRUE,
+      4. fix_jobs.status = 'awaiting_approval'.
+    Returns None otherwise.
+    """
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT p.id, p.job_id, p.attempt_number, p.diff_content, p.explanation,
+               p.validation_log
+        FROM fix_jobs fj
+        JOIN patches p ON p.job_id = fj.id
+        WHERE fj.id = $1
+          AND p.id = $2
+          AND p.validation_passed = TRUE
+          AND fj.status = 'awaiting_approval'
+        """,
+        job_id, patch_id,
+    )
+    return dict(row) if row else None
+
+
+async def get_pull_request_for_job(job_id: str) -> dict[str, Any] | None:
+    """Return the pull_requests row for a job, if one was already opened."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT id, pr_number, pr_url, status FROM pull_requests WHERE job_id = $1",
+        job_id,
+    )
+    return dict(row) if row else None
+
+
+async def insert_pull_request(
+    job_id: str,
+    patch_id: str,
+    pr_number: int,
+    pr_url: str,
+) -> None:
+    """Record an opened PR and move the job to 'pr_created' atomically."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO pull_requests (job_id, patch_id, pr_number, pr_url)
+                VALUES ($1, $2, $3, $4)
+                """,
+                job_id, patch_id, pr_number, pr_url,
+            )
+            await conn.execute(
+                """
+                UPDATE fix_jobs
+                SET status = 'pr_created', error_message = NULL, updated_at = NOW()
+                WHERE id = $1
+                """,
+                job_id,
+            )

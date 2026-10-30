@@ -144,3 +144,25 @@ async def get_repo_tree(
         for item in data.get("tree", [])
         if item["type"] == "blob"
     ]
+
+
+async def create_pull_request(
+    client: httpx.AsyncClient,
+    owner: str,
+    repo: str,
+    token: str,
+    head: str,
+    base: str,
+    title: str,
+    body: str,
+) -> dict:
+    """Open a pull request from head into base. Returns {number, html_url}."""
+    resp = await client.post(
+        f"{GITHUB_API}/repos/{owner}/{repo}/pulls",
+        headers=_auth_headers(token),
+        json={"title": title, "head": head, "base": base, "body": body},
+    )
+    if resp.status_code >= 400:
+        raise RuntimeError(f"GitHub PR creation failed ({resp.status_code}): {resp.text[:500]}")
+    data = resp.json()
+    return {"number": data["number"], "html_url": data["html_url"]}
