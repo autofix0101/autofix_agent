@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS fix_jobs (
 CREATE INDEX IF NOT EXISTS fix_jobs_repo_id_idx ON fix_jobs(repo_id);
 CREATE INDEX IF NOT EXISTS fix_jobs_signal_id_idx ON fix_jobs(signal_id);
 CREATE INDEX IF NOT EXISTS fix_jobs_status_idx ON fix_jobs(status);
+CREATE UNIQUE INDEX IF NOT EXISTS fix_jobs_one_active_per_signal ON fix_jobs(signal_id) WHERE status <> 'failed';
 
 -- -----------------------------------------------------------------------------
 -- 8. Job Events Table (Progress Timeline / Logs)
