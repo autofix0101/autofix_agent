@@ -32,10 +32,15 @@ class LLMClient:
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
+        tool_choice: str | dict[str, Any] = "auto",
     ) -> dict[str, Any]:
         """
         Send messages and tool definitions to the LLM.
-        Returns response structure: {"content": str | None, "tool_calls": list}
+
+        tool_choice: "auto", or {"type": "function", "function": {"name": ...}}
+        to force a specific tool call.
+
+        Returns response structure: {"content": str | None, "reasoning": str | None, "tool_calls": list}
         """
         if not AsyncGroq:
             raise EnvironmentError("The 'groq' Python package is not installed. Please run: pip install groq")
@@ -44,13 +49,27 @@ class LLMClient:
         if not self._groq_client:
             raise EnvironmentError("Failed to initialize Groq client.")
 
-        response = await self._groq_client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            temperature=0.1,
-        )
+        try:
+            response = await self._groq_client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                temperature=0.1,
+            )
+        except Exception as e:
+            if tool_choice == "auto":
+                raise
+            # Some models reject forced tool choice — fall back to "auto";
+            # the caller's prompt still demands the tool call.
+            logger.warning("Forced tool_choice rejected (%s); retrying with tool_choice='auto'", e)
+            response = await self._groq_client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+                temperature=0.1,
+            )
 
         choice = response.choices[0]
         message = choice.message
@@ -70,5 +89,7 @@ class LLMClient:
 
         return {
             "content": message.content,
+            # Reasoning models on Groq (e.g. qwen3) expose their thinking here
+            "reasoning": getattr(message, "reasoning", None),
             "tool_calls": tool_calls,
         }

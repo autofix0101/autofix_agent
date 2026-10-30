@@ -42,6 +42,8 @@ class Settings:
 
     # Worker & Pipeline settings
     MAX_VALIDATION_ATTEMPTS: int = int(os.environ.get("MAX_VALIDATION_ATTEMPTS", "3"))
+    # LLM tool-calling turns per generation attempt; the last turn is forced to propose_patch
+    GENERATION_MAX_TURNS: int = int(os.environ.get("GENERATION_MAX_TURNS", "10"))
     WORKER_POLL_INTERVAL: float = float(os.environ.get("WORKER_POLL_INTERVAL", "2.0"))
 
 

@@ -12,6 +12,7 @@ Stages per fix_job:
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from . import db
@@ -29,6 +30,25 @@ from .validation.test_runners import run_tests_in_directory
 logger = get_logger("pipeline")
 
 
+def _signal_title(signal_row: dict[str, Any] | None) -> str:
+    """Human title of the signal: issue title / workflow name, not the issue number."""
+    if not signal_row:
+        return ""
+    data = signal_row.get("parsed_data") or {}
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except ValueError:
+            data = {}
+    if not isinstance(data, dict):
+        data = {}
+    if signal_row.get("type") == "ci_failure":
+        title = data.get("workflow_name") and f"CI failure in workflow '{data['workflow_name']}'"
+    else:
+        title = data.get("title")
+    return title or str(signal_row.get("source_ref") or "")
+
+
 async def run_pipeline(job: dict[str, Any]) -> None:
     """Execute all pipeline stages for a claimed fix_job."""
     job_id = str(job["id"])
@@ -40,7 +60,7 @@ async def run_pipeline(job: dict[str, Any]) -> None:
     # Load signal (raw_content + parsed data)
     signal_row = await db.get_signal(signal_id) if signal_id else None
     raw_content = signal_row.get("raw_content", "") if signal_row else ""
-    signal_title = signal_row.get("source_ref", "") if signal_row else ""
+    signal_title = _signal_title(signal_row)
 
     try:
         # ==================================================================
@@ -122,6 +142,10 @@ async def run_pipeline(job: dict[str, Any]) -> None:
         except Exception as e:
             logger.warning("[Job %s] Could not clone repo for sandbox (%s); validation will skip test run.", job_id, e)
 
+        # Retry context: either the last failed diff + its log, or the last no-patch explanation
+        last_diff: str | None = None
+        last_explanation: str | None = None
+
         while attempt <= max_attempts and not validation_passed:
             logger.info("[Job %s] ---> STAGE 3: Generating patch (attempt %d/%d)...", job_id, attempt, max_attempts)
             await db.update_job_status(job_id, status="generating", attempt_count=attempt)
@@ -133,19 +157,23 @@ async def run_pipeline(job: dict[str, Any]) -> None:
                 signal=preprocessed,
                 candidates=candidates,
                 attempt_number=attempt,
-                previous_validation_log=last_log,
+                previous_validation_log=last_log if last_diff else None,
+                previous_diff=last_diff,
+                previous_explanation=last_explanation,
             )
             patch_id = patch_result["patch_id"]
             diff_content = patch_result["diff_content"]
 
             if not diff_content or not diff_content.strip():
-                last_log = "Error: Generated patch was empty."
-                logger.warning("[Job %s] LLM produced an empty patch on attempt %d.", job_id, attempt)
+                explanation = patch_result.get("explanation", "")
+                if patch_result.get("no_fix"):
+                    last_log = f"LLM concluded no code change is needed: {explanation}"
+                else:
+                    last_log = "LLM did not produce a patch."
+                logger.warning("[Job %s] No patch on attempt %d: %s", job_id, attempt, last_log[:200])
                 await db.update_patch_validation(patch_id, False, last_log)
-                await db.add_job_event(
-                    job_id, "generating",
-                    f"Attempt {attempt} failed: LLM produced empty patch. {patch_result.get('explanation', '')[:100]}"
-                )
+                await db.add_job_event(job_id, "generating", f"Attempt {attempt}: {last_log[:200]}")
+                last_diff, last_explanation = None, explanation
                 attempt += 1
                 continue
 
@@ -169,6 +197,7 @@ async def run_pipeline(job: dict[str, Any]) -> None:
                     test_ok, test_log = run_tests_in_directory(sandbox_path)
                     validation_passed = test_ok
                     last_log = test_log
+            last_diff, last_explanation = diff_content, None
 
             await db.update_patch_validation(patch_id, validation_passed, last_log)
 
