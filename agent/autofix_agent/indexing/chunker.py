@@ -603,9 +603,30 @@ def chunk_file_content(content: str, file_path: str) -> list[Chunk]:
         return _chunk_generic_regex(content, clean_path, "text")
 
 
+_IGNORED_FILE_NAMES = {
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "composer.lock",
+    "cargo.lock",
+    "pipfile.lock",
+    "poetry.lock",
+    "go.sum",
+    "gemfile.lock",
+}
+
+
 def is_chunkable_file(file_path: str) -> bool:
     """Return True if the file should be parsed and indexed."""
-    ext = os.path.splitext(file_path)[1].lower()
+    clean_path = file_path.replace("\\", "/")
+    base_name = os.path.basename(clean_path).lower()
+
+    if base_name in _IGNORED_FILE_NAMES:
+        return False
+    if base_name.endswith((".min.js", ".min.css", ".map")):
+        return False
+
+    ext = os.path.splitext(clean_path)[1].lower()
     valid_exts = {
         ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs",
         ".go", ".java", ".rs", ".rb", ".cpp", ".c",

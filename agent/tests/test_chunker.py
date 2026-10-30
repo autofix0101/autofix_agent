@@ -23,6 +23,10 @@ class TestChunker(unittest.TestCase):
 
         self.assertFalse(is_chunkable_file("image.png"))
         self.assertFalse(is_chunkable_file("archive.zip"))
+        self.assertFalse(is_chunkable_file("server/package-lock.json"))
+        self.assertFalse(is_chunkable_file("yarn.lock"))
+        self.assertFalse(is_chunkable_file("pnpm-lock.yaml"))
+        self.assertFalse(is_chunkable_file("bundle.min.js"))
 
     def test_chunk_python(self):
         chunks = chunk_file_content(PYTHON_SOURCE_SAMPLE, "payment/processor.py")
