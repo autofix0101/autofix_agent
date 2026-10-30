@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "repo-analyzer"
-version = "0.1.0"
-description = "Repo Analyzer Agent — AST-based code chunking and embedding for Autofix"
+name = "autofix-agent"
+version = "0.2.0"
+description = "AutoFix Agent — Architecture, Incremental Indexing, Localization, Generation and Validation"
 requires-python = ">=3.9"
 dependencies = [
     "asyncpg>=0.29.0",
@@ -16,14 +16,17 @@ dependencies = [
     "tree-sitter-python>=0.23.0",
     "tree-sitter-javascript>=0.23.0",
     "tree-sitter-typescript>=0.23.0",
+    "tree-sitter-go>=0.23.0",
+    "tree-sitter-java>=0.23.0",
+    "groq>=0.9.0",
 ]
 
 [project.scripts]
-repo-analyzer = "repo_analyzer.main:cli"
+autofix-worker = "autofix_agent.worker:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/repo_analyzer"]
+packages = ["autofix_agent"]
 
-[tool.hatch.envs.default]
-type = "virtual"
-path = ".venv"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

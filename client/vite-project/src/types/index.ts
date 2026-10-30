@@ -60,10 +60,34 @@ export interface Signal {
   id: string;
   type: "github_issue" | "ci_failure";
   source_ref: string;
-  status: "open" | "in_progress" | "resolved" | "ignored";
+  status: "open" | "in_progress" | "resolved" | "failed" | "ignored";
   parsed_data: IssueSignalData | CiFailureSignalData;
   raw_content: string;
   created_at: string;
+  // Latest fix job for this signal (null if never queued)
+  job_id: string | null;
+  job_status: FixJobStatus | null;
+  job_error: string | null;
+  pr_number: number | null;
+  pr_url: string | null;
+}
+
+export type FixJobStatus =
+  | "queued"
+  | "reindexing"
+  | "analyzing_signal"
+  | "localizing"
+  | "root_cause"
+  | "generating"
+  | "validating"
+  | "awaiting_approval"
+  | "pr_created"
+  | "failed";
+
+// Response from POST /repositories/:id/signals/:signalId/fix
+export interface FixJobResponse {
+  message: string;
+  job: { id: string; status: FixJobStatus; signal_id: string };
 }
 
 export interface IssueSignalData {

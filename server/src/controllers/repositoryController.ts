@@ -12,7 +12,10 @@ import {
     createGithubWebhook,
     deleteGithubWebhook,
 } from "../services/githubService.js";
-import { getSignalsByRepoId } from "../db/queries/signalQueries.js";
+import {
+    createFixJobForSignal,
+    getSignalsByRepoId,
+} from "../db/queries/signalQueries.js";
 
 const getAllRepos = async (req: AuthRequest, res: express.Response) => {
     try {
@@ -274,4 +277,56 @@ const getRepoSignals = async (req: AuthRequest, res: express.Response) => {
     }
 };
 
-export { getAllRepos, getRepoDetails, createRepository, deleteRepo, getRepoSignals };
+/**
+ * POST /repositories/:id/signals/:signalId/fix
+ *
+ * Queues a fix job for the signal. The Python agent polls fix_jobs for
+ * status = 'queued' and runs the pipeline (reindex → localize → generate →
+ * validate → open PR) on its own; this endpoint only creates the row.
+ *
+ *   201 — job queued
+ *   404 — signal not found in this user's repository
+ *   409 — signal already has a non-failed job (queued, running, or PR opened)
+ */
+const fixSignal = async (req: AuthRequest, res: express.Response) => {
+    try {
+        const userId = req.userId;
+        if (!userId) {
+            return res.status(401).json({ message: "Not Authorized" });
+        }
+
+        const repoId = req.params.id;
+        const signalId = req.params.signalId;
+        if (!repoId || typeof repoId !== "string" || !signalId || typeof signalId !== "string") {
+            return res.status(400).json({ message: "Invalid or missing repository or signal ID" });
+        }
+
+        const result = await createFixJobForSignal(repoId, signalId, userId);
+
+        if (result.kind === "signal_not_found") {
+            return res.status(404).json({ message: "Signal not found" });
+        }
+        if (result.kind === "already_active") {
+            return res.status(409).json({
+                message: `A fix job for this signal already exists (status: ${result.jobStatus})`,
+                jobId: result.jobId,
+                jobStatus: result.jobStatus,
+            });
+        }
+
+        return res.status(201).json({ message: "Fix job queued", job: result.job });
+    } catch (err: any) {
+        // Lost a race against a concurrent request (fix_jobs_one_active_per_signal)
+        if (err?.code === "23505") {
+            return res.status(409).json({ message: "A fix job for this signal already exists" });
+        }
+        // Malformed UUID in the path
+        if (err?.code === "22P02") {
+            return res.status(404).json({ message: "Signal not found" });
+        }
+        console.error("Error while queuing fix job", err);
+        return res.status(500).json({ error: "Internal server error" });
+    }
+};
+
+export { getAllRepos, getRepoDetails, createRepository, deleteRepo, getRepoSignals, fixSignal };

@@ -3,6 +3,7 @@ import { isLoggedIn } from "../middleware/auth.js";
 import {
     createRepository,
     deleteRepo,
+    fixSignal,
     getAllRepos,
     getRepoDetails,
     getRepoSignals,
@@ -13,6 +14,7 @@ const router = Router();
 router.get("/", isLoggedIn, getAllRepos);
 router.get("/:id", isLoggedIn, getRepoDetails);
 router.get("/:id/signals", isLoggedIn, getRepoSignals);
+router.post("/:id/signals/:signalId/fix", isLoggedIn, fixSignal);
 router.post("/", isLoggedIn, createRepository);
 router.delete("/:id", isLoggedIn, deleteRepo);
 
