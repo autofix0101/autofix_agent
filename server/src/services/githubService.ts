@@ -7,7 +7,8 @@ export const getGithubAuthUrl = () => {
         // user:email   — read profile and email address
         // admin:repo_hook — create, update, and delete repository webhooks
         //   (write:repo_hook alone is insufficient for DELETE /hooks/:id)
-        scope: "user:email admin:repo_hook",
+        // repo            — clone private repos, push autofix branches and open PRs
+        scope: "user:email admin:repo_hook repo",
     });
     return `https://github.com/login/oauth/authorize?${params.toString()}`;
 };
