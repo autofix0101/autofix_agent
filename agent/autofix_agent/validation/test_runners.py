@@ -53,10 +53,9 @@ def run_tests_in_directory(
 
     # 2. Determine test command if not provided
     if not test_cmd:
+        # JS/TS packages (anywhere in the repo) are handled by js_checks.JsValidator
         if os.path.exists(os.path.join(directory, "pytest.ini")) or os.path.exists(os.path.join(directory, "tests")):
             test_cmd = "pytest"
-        elif os.path.exists(os.path.join(directory, "package.json")):
-            test_cmd = "npm test"
         elif os.path.exists(os.path.join(directory, "go.mod")):
             test_cmd = "go test ./..."
         elif os.path.exists(os.path.join(directory, "pom.xml")):

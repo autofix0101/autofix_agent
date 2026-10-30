@@ -12,6 +12,7 @@ Stages per fix_job:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -22,7 +23,9 @@ from .generation.agent_loop import run_generation_loop
 from .indexing.indexer import run_indexing
 from .localization.ranker import localize_and_rank
 from .signals.issue_preprocessor import preprocess_signal_content
+from .utils.git_utils import diff_changed_files
 from .utils.logging import get_logger
+from .validation.js_checks import JsValidator
 from .validation.patch_apply import apply_patch
 from .validation.sandbox import Sandbox
 from .validation.test_runners import run_tests_in_directory
@@ -47,6 +50,21 @@ def _signal_title(signal_row: dict[str, Any] | None) -> str:
     else:
         title = data.get("title")
     return title or str(signal_row.get("source_ref") or "")
+
+
+def _validate_patch(sandbox_source: str, diff_content: str, js_validator: JsValidator) -> tuple[bool, str]:
+    """Apply the patch in a throwaway sandbox and run every applicable check (blocking)."""
+    with Sandbox(sandbox_source) as sandbox_path:
+        apply_ok, apply_msg = apply_patch(sandbox_path, diff_content)
+        if not apply_ok:
+            return False, f"Patch apply failed:\n{apply_msg}"
+
+        test_ok, test_log = run_tests_in_directory(sandbox_path)
+        if not test_ok:
+            return False, test_log
+
+        js_ok, js_log = js_validator.validate(sandbox_path, diff_changed_files(diff_content))
+        return js_ok, "\n\n".join(filter(None, [test_log, js_log]))
 
 
 async def run_pipeline(job: dict[str, Any]) -> None:
@@ -142,6 +160,7 @@ async def run_pipeline(job: dict[str, Any]) -> None:
         except Exception as e:
             logger.warning("[Job %s] Could not clone repo for sandbox (%s); validation will skip test run.", job_id, e)
 
+        js_validator = JsValidator(sandbox_source)
         # Retry context: either the last failed diff + its log, or the last no-patch explanation
         last_diff: str | None = None
         last_explanation: str | None = None
@@ -187,17 +206,12 @@ async def run_pipeline(job: dict[str, Any]) -> None:
             await db.update_job_status(job_id, status="validating")
             await db.add_job_event(job_id, "validating", f"Testing patch #{patch_id} in isolated sandbox.")
 
-            with Sandbox(sandbox_source) as sandbox_path:
-                apply_ok, apply_msg = apply_patch(sandbox_path, diff_content)
-                if not apply_ok:
-                    validation_passed = False
-                    last_log = f"Patch apply failed:\n{apply_msg}"
-                    logger.warning("[Job %s] Patch apply failed in sandbox: %s", job_id, apply_msg)
-                else:
-                    test_ok, test_log = run_tests_in_directory(sandbox_path)
-                    validation_passed = test_ok
-                    last_log = test_log
+            # Blocking work (git, npm install, tsc, tests) — keep it off the event loop
+            validation_passed, last_log = await asyncio.to_thread(
+                _validate_patch, sandbox_source, diff_content, js_validator,
+            )
             last_diff, last_explanation = diff_content, None
+            logger.info("[Job %s] Validation log:\n%s", job_id, (last_log or "")[:1500])
 
             await db.update_patch_validation(patch_id, validation_passed, last_log)
 
