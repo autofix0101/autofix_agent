@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { AddRepoBody, Repo, RepoDetail, Signal } from "../types";
+import type { AddRepoBody, FixJobResponse, Repo, RepoDetail, Signal } from "../types";
 
 export async function getRepos(): Promise<Repo[]> {
   return apiFetch<Repo[]>("/repositories");
@@ -31,4 +31,13 @@ export async function deleteRepo(
 
 export async function getRepoSignals(id: string): Promise<Signal[]> {
   return apiFetch<Signal[]>(`/repositories/${id}/signals`);
+}
+
+export async function fixSignal(
+  repoId: string,
+  signalId: string
+): Promise<FixJobResponse> {
+  return apiFetch<FixJobResponse>(`/repositories/${repoId}/signals/${signalId}/fix`, {
+    method: "POST",
+  });
 }

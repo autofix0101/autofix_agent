@@ -1,9 +1,23 @@
 import { useState } from "react";
-import type { Signal, IssueSignalData, CiFailureSignalData } from "../types";
+import type { Signal, IssueSignalData, CiFailureSignalData, FixJobStatus } from "../types";
 
 interface Props {
   signal: Signal;
+  onFix?: (signal: Signal) => Promise<void>;
 }
+
+const jobStageLabel: Record<FixJobStatus, string> = {
+  queued: "Queued",
+  reindexing: "Indexing",
+  analyzing_signal: "Analyzing",
+  localizing: "Localizing",
+  root_cause: "Root cause",
+  generating: "Generating fix",
+  validating: "Validating",
+  awaiting_approval: "Opening PR",
+  pr_created: "PR opened",
+  failed: "Failed",
+};
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -19,11 +33,32 @@ const statusConfig = {
   open: { label: "Open", color: "#fbbf24", bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.3)" },
   in_progress: { label: "In Progress", color: "#818cf8", bg: "rgba(99,102,241,0.12)", border: "rgba(99,102,241,0.3)" },
   resolved: { label: "Resolved", color: "#34d399", bg: "rgba(16,185,129,0.12)", border: "rgba(16,185,129,0.3)" },
+  failed: { label: "Failed", color: "#f87171", bg: "rgba(239,68,68,0.12)", border: "rgba(239,68,68,0.3)" },
   ignored: { label: "Ignored", color: "#64748b", bg: "rgba(100,116,139,0.12)", border: "rgba(100,116,139,0.25)" },
 };
 
-export default function SignalCard({ signal }: Props) {
+export default function SignalCard({ signal, onFix }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [fixing, setFixing] = useState(false);
+  const [fixError, setFixError] = useState<string | null>(null);
+
+  const jobStatus = signal.job_status;
+  const canFix = !jobStatus || jobStatus === "failed";
+  // awaiting_approval + error_message means the patch validated but the PR push failed
+  const prFailed = jobStatus === "awaiting_approval" && !!signal.job_error;
+
+  const handleFix = async () => {
+    if (!onFix || fixing) return;
+    setFixing(true);
+    setFixError(null);
+    try {
+      await onFix(signal);
+    } catch (err: unknown) {
+      setFixError(err instanceof Error ? err.message : "Failed to queue fix");
+    } finally {
+      setFixing(false);
+    }
+  };
   const isIssue = signal.type === "github_issue";
   const status = statusConfig[signal.status] ?? statusConfig.open;
 
@@ -109,6 +144,14 @@ export default function SignalCard({ signal }: Props) {
           <div style={{ fontSize: "0.75rem", color: "#64748b" }}>
             {subtitle}
           </div>
+          {(fixError || (jobStatus === "failed" && signal.job_error) || prFailed) && (
+            <div
+              style={{ fontSize: "0.72rem", color: "#f87171", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              title={fixError ?? signal.job_error ?? undefined}
+            >
+              {fixError ?? signal.job_error}
+            </div>
+          )}
           {/* Labels for issues */}
           {isIssue && issueData?.labels && issueData.labels.length > 0 && (
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
@@ -133,6 +176,80 @@ export default function SignalCard({ signal }: Props) {
 
         {/* Right side */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          {/* Fix job: button / live stage / PR link */}
+          {jobStatus === "pr_created" && signal.pr_url ? (
+            <a
+              href={signal.pr_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                fontSize: "0.75rem",
+                fontWeight: 600,
+                padding: "4px 10px",
+                borderRadius: 7,
+                background: "rgba(16,185,129,0.1)",
+                color: "#34d399",
+                border: "1px solid rgba(16,185,129,0.3)",
+                textDecoration: "none",
+                whiteSpace: "nowrap",
+              }}
+              title="View pull request on GitHub"
+            >
+              PR #{signal.pr_number}
+            </a>
+          ) : canFix && onFix ? (
+            <button
+              onClick={handleFix}
+              disabled={fixing}
+              style={{
+                fontSize: "0.75rem",
+                fontWeight: 600,
+                padding: "4px 12px",
+                borderRadius: 7,
+                background: fixing ? "rgba(99,102,241,0.15)" : "#4f46e5",
+                color: "#fff",
+                border: "1px solid rgba(99,102,241,0.5)",
+                cursor: fixing ? "default" : "pointer",
+                whiteSpace: "nowrap",
+                transition: "background 0.15s",
+              }}
+              title="Queue an AutoFix job for this signal"
+            >
+              {fixing ? "Queuing…" : jobStatus === "failed" ? "Retry fix" : "Fix"}
+            </button>
+          ) : jobStatus ? (
+            <span
+              style={{
+                fontSize: "0.72rem",
+                fontWeight: 600,
+                padding: "4px 10px",
+                borderRadius: 7,
+                background: prFailed ? "rgba(239,68,68,0.1)" : "rgba(99,102,241,0.1)",
+                color: prFailed ? "#f87171" : "#818cf8",
+                border: `1px solid ${prFailed ? "rgba(239,68,68,0.3)" : "rgba(99,102,241,0.3)"}`,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                whiteSpace: "nowrap",
+              }}
+              title={signal.job_error ?? undefined}
+            >
+              {!prFailed && (
+                <span
+                  style={{
+                    width: 9,
+                    height: 9,
+                    border: "1.5px solid rgba(129,140,248,0.3)",
+                    borderTopColor: "#818cf8",
+                    borderRadius: "50%",
+                    animation: "spin 0.8s linear infinite",
+                  }}
+                />
+              )}
+              {prFailed ? "PR failed" : jobStageLabel[jobStatus]}
+            </span>
+          ) : null}
+
           <span style={{ fontSize: "0.72rem", color: "#475569", whiteSpace: "nowrap" }}>
             {timeAgo(signal.created_at)}
           </span>

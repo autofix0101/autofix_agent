@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { deleteRepo, getRepoById, getRepoSignals } from "../api/repos";
+import { deleteRepo, fixSignal, getRepoById, getRepoSignals } from "../api/repos";
 import DeleteConfirmDialog from "../components/DeleteConfirmDialog";
 import SignalCard from "../components/SignalCard";
 import type { RepoDetail, Signal } from "../types";
@@ -92,16 +92,33 @@ export default function RepoDetailPage() {
       });
   }, [id]);
 
-  // Poll signals every 30 s to catch updates
+  // A fix job is running for some signal (not yet finished, failed, or stuck on a PR error)
+  const hasActiveJob = signals.some(
+    (s) =>
+      s.job_status &&
+      s.job_status !== "pr_created" &&
+      s.job_status !== "failed" &&
+      !(s.job_status === "awaiting_approval" && s.job_error)
+  );
+
+  // Poll signals to catch updates — every 5 s while a fix job is running, else every 30 s
   useEffect(() => {
     if (!id) return;
     const interval = setInterval(() => {
       getRepoSignals(id)
         .then(setSignals)
         .catch(() => {/* silent */});
-    }, 30_000);
+    }, hasActiveJob ? 5_000 : 30_000);
     return () => clearInterval(interval);
-  }, [id]);
+  }, [id, hasActiveJob]);
+
+  // Queue a fix job; errors propagate to SignalCard, which shows them inline
+  const handleFix = async (signal: Signal) => {
+    if (!id) return;
+    await fixSignal(id, signal.id);
+    const updated = await getRepoSignals(id);
+    setSignals(updated);
+  };
 
   const handleDelete = async () => {
     if (!id) return;
@@ -543,7 +560,7 @@ export default function RepoDetailPage() {
                   </div>
                 ) : (
                   (activeTab === "issues" ? issueSignals : ciSignals).map((signal) => (
-                    <SignalCard key={signal.id} signal={signal} />
+                    <SignalCard key={signal.id} signal={signal} onFix={handleFix} />
                   ))
                 )}
               </div>
