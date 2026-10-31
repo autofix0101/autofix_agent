@@ -17,6 +17,7 @@ from typing import Any
 
 from .. import db
 from ..config import settings
+from ..progress import describe_tool_call, report_progress
 from ..signals.issue_preprocessor import PreprocessedSignal
 from ..utils.logging import get_logger
 from .llm_client import LLMClient
@@ -129,6 +130,7 @@ You have {max_turns} turns in total.
             )
         except Exception as e:
             logger.error("LLM call failed on turn %d: %s", turn + 1, e)
+            await report_progress(job_id, "generating", "The AI service stopped responding, so this attempt ended early.")
             break
 
         thinking = resp.get("reasoning") or resp.get("content")
@@ -168,6 +170,9 @@ You have {max_turns} turns in total.
                     }
                     tool_output = "Patch proposed and captured."
                 else:
+                    activity = describe_tool_call(name, args)
+                    if activity:
+                        await report_progress(job_id, "generating", activity)
                     tool_output = executor.execute_tool_call(name, args)
                     logger.info("[Job %s] Executed tool %s -> %s", job_id, name, tool_output[:80].replace("\n", " "))
 

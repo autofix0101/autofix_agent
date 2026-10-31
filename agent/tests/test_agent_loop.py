@@ -35,7 +35,9 @@ class TestGenerationLoop(unittest.IsolatedAsyncioTestCase):
 
     async def _run(self, **kwargs):
         llm = ExploringForeverLLM()
+        self.progress = mock.AsyncMock()
         with mock.patch.object(agent_loop, "LLMClient", return_value=llm), \
+             mock.patch.object(agent_loop, "report_progress", self.progress), \
              mock.patch.object(agent_loop.db, "insert_patch", mock.AsyncMock(return_value="patch-1")):
             result = await agent_loop.run_generation_loop(
                 job_id="job-1",
@@ -61,6 +63,11 @@ class TestGenerationLoop(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[Turn 3/4]", llm.calls[2]["last_message"])
         self.assertIn("[Final turn]", llm.calls[3]["last_message"])
 
+    async def test_tool_calls_reported_as_progress(self):
+        await self._run()
+        messages = [c.args[2] for c in self.progress.await_args_list]
+        self.assertEqual(messages, ["Reading `math_utils.py`"] * 3)
+
     async def test_retry_after_failed_validation_includes_previous_diff(self):
         with mock.patch.object(agent_loop, "LLMClient") as cls:
             llm = ExploringForeverLLM()
@@ -72,7 +79,8 @@ class TestGenerationLoop(unittest.IsolatedAsyncioTestCase):
                 return await ExploringForeverLLM.call_with_tools(llm, messages, tools, "forced")
 
             llm.call_with_tools = capture
-            with mock.patch.object(agent_loop.db, "insert_patch", mock.AsyncMock(return_value="p")):
+            with mock.patch.object(agent_loop.db, "insert_patch", mock.AsyncMock(return_value="p")), \
+                 mock.patch.object(agent_loop, "report_progress", mock.AsyncMock()):
                 await agent_loop.run_generation_loop(
                     job_id="job-1", repo_path=FIXTURE_REPO,
                     signal=preprocess_signal_content("bug", title="Bug"), candidates=[],

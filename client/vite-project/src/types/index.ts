@@ -121,3 +121,58 @@ export interface SignalEvent {
   type: "github_issue" | "ci_failure";
   title: string;
 }
+
+// ── Issue detail: GET /repositories/:id/signals/:signalId ───────────────────
+
+// Plain-language progress message written by the agent
+export interface JobEvent {
+  id: string;
+  job_id: string;
+  stage: FixJobStatus | "pr_failed";
+  message: string;
+  created_at: string;
+  // Resume token for the progress stream
+  cursor: string;
+}
+
+// Code location the agent suspected
+export interface FixCandidate {
+  rank: number;
+  method: string;
+  file_path: string;
+  start_line: number;
+  end_line: number;
+}
+
+// One generate → validate attempt within a run
+export interface FixAttempt {
+  attempt_number: number;
+  explanation: string | null;
+  diff_content: string;
+  diff_truncated: boolean;
+  // null while the attempt is still being tested
+  validation_passed: boolean | null;
+  outcome: string | null;
+  log_excerpt: string | null;
+  created_at: string;
+}
+
+// One fix job for the signal
+export interface FixRun {
+  id: string;
+  status: FixJobStatus;
+  attempt_count: number;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  pull_request: { pr_number: number | null; pr_url: string; status: string } | null;
+  events: JobEvent[];
+  candidates: FixCandidate[];
+  attempts: FixAttempt[];
+}
+
+export interface SignalDetail {
+  signal: Omit<Signal, "job_id" | "job_status" | "job_error" | "pr_number" | "pr_url">;
+  // Newest first
+  runs: FixRun[];
+}

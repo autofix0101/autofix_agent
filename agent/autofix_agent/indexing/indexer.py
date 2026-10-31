@@ -162,6 +162,14 @@ async def run_indexing(repo_id: str) -> str:
         logger.info("Stored SHA : %s (Existing files in DB: %d)", stored_sha or "(none — full index)", len(existing_files))
         logger.info("Remote SHA : %s", head_sha)
 
+        # Drop files indexed before they were excluded (lockfiles, node_modules, ...)
+        stale = [p for p in existing_files if not is_chunkable_file(p)]
+        for path in stale:
+            await db.delete_file(repo_id, path)
+        if stale:
+            logger.info("Purged %d previously indexed file(s) that are now excluded", len(stale))
+            existing_files = [p for p in existing_files if is_chunkable_file(p)]
+
         if stored_sha is None or not existing_files:
             await full_index(http, repo, head_sha)
         elif stored_sha == head_sha:

@@ -27,6 +27,25 @@ class TestChunker(unittest.TestCase):
         self.assertFalse(is_chunkable_file("yarn.lock"))
         self.assertFalse(is_chunkable_file("pnpm-lock.yaml"))
         self.assertFalse(is_chunkable_file("bundle.min.js"))
+        self.assertFalse(is_chunkable_file("poetry.lock"))
+        self.assertFalse(is_chunkable_file("go.sum"))
+
+    def test_is_chunkable_file_skips_dependency_and_build_dirs(self):
+        self.assertFalse(is_chunkable_file("node_modules/lodash/index.js"))
+        self.assertFalse(is_chunkable_file("client/node_modules/react/package.json"))
+        self.assertFalse(is_chunkable_file("client/dist/assets/index.js"))
+        self.assertFalse(is_chunkable_file(".venv/lib/python3.12/site-packages/x.py"))
+        self.assertFalse(is_chunkable_file("src/__pycache__/app.py"))
+        self.assertFalse(is_chunkable_file("mypkg.egg-info/setup.py"))
+        self.assertFalse(is_chunkable_file("vendor/github.com/pkg/errors/errors.go"))
+        self.assertFalse(is_chunkable_file("target/generated-sources/Foo.java"))
+        self.assertFalse(is_chunkable_file(".gradle/caches/x.json"))
+
+        # Real source in look-alike locations stays indexable
+        self.assertTrue(is_chunkable_file("packages/core/src/index.ts"))
+        self.assertTrue(is_chunkable_file("bin/www.js"))
+        self.assertTrue(is_chunkable_file("src/builder.py"))
+        self.assertTrue(is_chunkable_file("client/package.json"))
 
     def test_chunk_python(self):
         chunks = chunk_file_content(PYTHON_SOURCE_SAMPLE, "payment/processor.py")

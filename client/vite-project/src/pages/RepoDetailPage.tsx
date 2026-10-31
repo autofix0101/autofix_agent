@@ -560,7 +560,12 @@ export default function RepoDetailPage() {
                   </div>
                 ) : (
                   (activeTab === "issues" ? issueSignals : ciSignals).map((signal) => (
-                    <SignalCard key={signal.id} signal={signal} onFix={handleFix} />
+                    <SignalCard
+                      key={signal.id}
+                      signal={signal}
+                      onFix={handleFix}
+                      detailsHref={`/repos/${id}/signals/${signal.id}`}
+                    />
                   ))
                 )}
               </div>

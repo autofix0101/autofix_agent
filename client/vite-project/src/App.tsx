@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import LoginPage from "./pages/LoginPage";
 import ReposPage from "./pages/ReposPage";
 import RepoDetailPage from "./pages/RepoDetailPage";
+import IssueDetailPage from "./pages/IssueDetailPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Sidebar from "./components/Sidebar";
 import { useAuth } from "./context/AuthContext";
@@ -39,6 +40,16 @@ export default function App() {
           <ProtectedRoute>
             <AuthenticatedLayout>
               <RepoDetailPage />
+            </AuthenticatedLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/repos/:id/signals/:signalId"
+        element={
+          <ProtectedRoute>
+            <AuthenticatedLayout>
+              <IssueDetailPage />
             </AuthenticatedLayout>
           </ProtectedRoute>
         }

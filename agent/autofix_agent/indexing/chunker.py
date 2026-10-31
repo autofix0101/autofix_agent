@@ -603,27 +603,70 @@ def chunk_file_content(content: str, file_path: str) -> list[Chunk]:
         return _chunk_generic_regex(content, clean_path, "text")
 
 
+# Lockfiles and other generated dependency manifests: huge, machine-written,
+# and never the place a bug lives.
 _IGNORED_FILE_NAMES = {
+    # JavaScript / TypeScript
     "package-lock.json",
+    "npm-shrinkwrap.json",
     "yarn.lock",
     "pnpm-lock.yaml",
-    "composer.lock",
-    "cargo.lock",
+    "bun.lock",
+    "deno.lock",
+    # Python
     "pipfile.lock",
     "poetry.lock",
+    "pdm.lock",
+    "uv.lock",
+    # Go
     "go.sum",
+    "go.work.sum",
+    # Java / Kotlin
+    "gradle.lockfile",
+    # Other languages
+    "composer.lock",
+    "cargo.lock",
     "gemfile.lock",
+    "packages.lock.json",
 }
+
+# Dependency, virtualenv, build-output and tooling directories. A path is
+# skipped if any of its directory segments matches.
+_IGNORED_DIR_NAMES = {
+    # VCS / editors
+    ".git", ".hg", ".svn", ".idea", ".vscode",
+    # JavaScript / TypeScript
+    "node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store",
+    "dist", "build", "out", "coverage", ".next", ".nuxt", ".svelte-kit",
+    ".turbo", ".cache", ".parcel-cache", ".angular", "storybook-static",
+    # Python
+    "venv", ".venv", ".env", "virtualenv", "site-packages", "__pycache__",
+    ".tox", ".nox", ".eggs", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    "htmlcov",
+    # Go / PHP / Ruby
+    "vendor",
+    # Java / Kotlin / Rust
+    "target", ".gradle", ".mvn",
+    # C#
+    "obj",
+}
+
+
+def _is_ignored_dir(segment: str) -> bool:
+    return segment in _IGNORED_DIR_NAMES or segment.endswith(".egg-info")
 
 
 def is_chunkable_file(file_path: str) -> bool:
     """Return True if the file should be parsed and indexed."""
-    clean_path = file_path.replace("\\", "/")
-    base_name = os.path.basename(clean_path).lower()
+    clean_path = file_path.replace("\\", "/").strip("/")
+    segments = clean_path.lower().split("/")
+    base_name = segments[-1]
 
+    if any(_is_ignored_dir(seg) for seg in segments[:-1]):
+        return False
     if base_name in _IGNORED_FILE_NAMES:
         return False
-    if base_name.endswith((".min.js", ".min.css", ".map")):
+    if base_name.endswith((".min.js", ".min.css", ".map", ".bundle.js")):
         return False
 
     ext = os.path.splitext(clean_path)[1].lower()
