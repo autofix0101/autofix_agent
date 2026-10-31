@@ -1,9 +1,13 @@
 import { useState } from "react";
-import type { Signal, IssueSignalData, CiFailureSignalData, FixJobStatus } from "../types";
+import { useNavigate } from "react-router-dom";
+import type { Signal, FixJobStatus } from "../types";
+import { getSignalDisplay } from "../utils/signalDisplay";
 
 interface Props {
   signal: Signal;
   onFix?: (signal: Signal) => Promise<void>;
+  // Issue detail page with live fix progress and history
+  detailsHref?: string;
 }
 
 const jobStageLabel: Record<FixJobStatus, string> = {
@@ -37,7 +41,8 @@ const statusConfig = {
   ignored: { label: "Ignored", color: "#64748b", bg: "rgba(100,116,139,0.12)", border: "rgba(100,116,139,0.25)" },
 };
 
-export default function SignalCard({ signal, onFix }: Props) {
+export default function SignalCard({ signal, onFix, detailsHref }: Props) {
+  const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
   const [fixing, setFixing] = useState(false);
   const [fixError, setFixError] = useState<string | null>(null);
@@ -59,25 +64,8 @@ export default function SignalCard({ signal, onFix }: Props) {
       setFixing(false);
     }
   };
-  const isIssue = signal.type === "github_issue";
   const status = statusConfig[signal.status] ?? statusConfig.open;
-
-  const rawParsed = typeof signal.parsed_data === "string" ? (() => {
-    try { return JSON.parse(signal.parsed_data); } catch { return {}; }
-  })() : (signal.parsed_data || {});
-
-  const issueData = isIssue ? (rawParsed as IssueSignalData) : null;
-  const ciData = !isIssue ? (rawParsed as CiFailureSignalData) : null;
-
-  const title = isIssue
-    ? issueData?.title ?? `Issue #${signal.source_ref}`
-    : ciData?.workflow_name ?? `Workflow run ${signal.source_ref}`;
-
-  const subtitle = isIssue
-    ? `#${issueData?.number} opened by ${issueData?.author ?? "unknown"}`
-    : `${ciData?.branch} · run #${ciData?.run_number} · triggered by ${ciData?.actor ?? "unknown"}`;
-
-  const externalUrl = isIssue ? issueData?.url : ciData?.html_url;
+  const { isIssue, issueData, ciData, title, subtitle, externalUrl } = getSignalDisplay(signal);
 
   return (
     <div
@@ -91,8 +79,27 @@ export default function SignalCard({ signal, onFix }: Props) {
       onMouseEnter={(e) => ((e.currentTarget as HTMLDivElement).style.borderColor = "rgba(255,255,255,0.12)")}
       onMouseLeave={(e) => ((e.currentTarget as HTMLDivElement).style.borderColor = "rgba(255,255,255,0.06)")}
     >
-      {/* Main row */}
-      <div style={{ padding: "14px 16px", display: "flex", alignItems: "flex-start", gap: 12 }}>
+      {/* Main row — opens the issue detail page; inner buttons and links stop propagation */}
+      <div
+        style={{
+          padding: "14px 16px",
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 12,
+          cursor: detailsHref ? "pointer" : undefined,
+        }}
+        onClick={detailsHref ? () => navigate(detailsHref) : undefined}
+        onKeyDown={
+          detailsHref
+            ? (e) => {
+                if (e.key === "Enter" && e.target === e.currentTarget) navigate(detailsHref);
+              }
+            : undefined
+        }
+        role={detailsHref ? "link" : undefined}
+        tabIndex={detailsHref ? 0 : undefined}
+        title={detailsHref ? "View fix progress and history" : undefined}
+      >
         {/* Type icon */}
         <div
           style={{
@@ -182,6 +189,7 @@ export default function SignalCard({ signal, onFix }: Props) {
               href={signal.pr_url}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
               style={{
                 fontSize: "0.75rem",
                 fontWeight: 600,
@@ -199,7 +207,10 @@ export default function SignalCard({ signal, onFix }: Props) {
             </a>
           ) : canFix && onFix ? (
             <button
-              onClick={handleFix}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleFix();
+              }}
               disabled={fixing}
               style={{
                 fontSize: "0.75rem",
@@ -272,7 +283,10 @@ export default function SignalCard({ signal, onFix }: Props) {
 
           {/* Expand toggle */}
           <button
-            onClick={() => setExpanded((v) => !v)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded((v) => !v);
+            }}
             style={{
               background: "transparent",
               border: "none",
