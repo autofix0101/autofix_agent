@@ -6,6 +6,7 @@ assigns ranks and confidence scores, and persists to localization_candidates.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .. import db
@@ -14,6 +15,29 @@ from ..utils.logging import get_logger
 from .vector_search import search_vector_candidates
 
 logger = get_logger("localization.ranker")
+
+# Test files share symbols with the code they exercise, so they score close to
+# it in every search. They stay as candidates (a failing test is useful context)
+# but are scaled down so source code takes the top slots.
+TEST_FILE_SCORE_FACTOR = 0.8
+
+_TEST_DIR_NAMES = {"test", "tests", "__tests__", "spec", "specs", "testing", "__mocks__"}
+_TEST_FILE_RE = re.compile(
+    r"(^test_.*\.py$)"                       # Python: test_foo.py
+    r"|(_test\.(py|go)$)"                    # Python / Go: foo_test.py, foo_test.go
+    r"|(^conftest\.py$)"                     # pytest fixtures
+    r"|(\.(test|spec)\.[cm]?[jt]sx?$)"       # JS/TS: foo.test.ts, foo.spec.jsx
+    r"|(^(test|tests)\.[cm]?[jt]sx?$)"
+    r"|((Test|Tests|IT)\.java$)"             # Java: FooTest.java, FooIT.java (src/test/ is caught by dir)
+)
+
+
+def is_test_path(file_path: str) -> bool:
+    """Return True if file_path looks like a test file or lives in a test directory."""
+    segments = file_path.replace("\\", "/").strip("/").split("/")
+    if any(seg.lower() in _TEST_DIR_NAMES for seg in segments[:-1]):
+        return True
+    return bool(_TEST_FILE_RE.search(segments[-1]))
 
 
 async def localize_and_rank(
@@ -68,7 +92,8 @@ async def localize_and_rank(
     # 2. pgvector similarity search
     # -----------------------------------------------------------------------
     if signal.search_query:
-        vector_candidates = await search_vector_candidates(repo_id, signal.search_query, limit=limit)
+        # Over-fetch so down-ranked test chunks can't push source code out of the top `limit`
+        vector_candidates = await search_vector_candidates(repo_id, signal.search_query, limit=limit * 2)
         for vc in vector_candidates:
             cid = vc["chunk_id"]
             if cid in seen_chunk_ids:
@@ -133,8 +158,12 @@ async def localize_and_rank(
                     })
 
     # -----------------------------------------------------------------------
-    # 5. Sort, rank, and persist
+    # 5. Down-rank tests, sort, rank, and persist
     # -----------------------------------------------------------------------
+    for c in candidates:
+        if is_test_path(c["file_path"]):
+            c["score"] *= TEST_FILE_SCORE_FACTOR
+
     candidates.sort(key=lambda x: x["score"], reverse=True)
     ranked = candidates[:limit]
     for r_idx, c in enumerate(ranked, start=1):

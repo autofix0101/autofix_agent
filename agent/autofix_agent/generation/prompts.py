@@ -20,7 +20,8 @@ Rules:
    - Context (unchanged) lines MUST start with a single space ` ` character and must match the file exactly.
    - Added lines start with `+`, removed lines start with `-`.
    - Provide raw diff content without markdown fences.
-9. Only if you are genuinely certain that the reported behavior is not caused by this repository's code, call `propose_patch` with an empty `diff_content` and use `explanation` to say what you checked and why no code change is needed.
+9. Fix the code under test, not the tests. A failing test usually points at a bug in the source it exercises; only change a test if it is itself clearly wrong (and say so in `explanation`).
+10. Only if you are genuinely certain that the reported behavior is not caused by this repository's code, call `propose_patch` with an empty `diff_content` and use `explanation` to say what you checked and why no code change is needed.
 """
 
 RETRY_PROMPT_TEMPLATE = """Your previous proposed patch failed validation.
