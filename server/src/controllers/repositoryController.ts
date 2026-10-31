@@ -16,6 +16,12 @@ import {
     createFixJobForSignal,
     getSignalsByRepoId,
 } from "../db/queries/signalQueries.js";
+import {
+    getFixRunsForSignal,
+    getFixRunStates,
+    getSignalEventsAfter,
+    getSignalForUser,
+} from "../db/queries/fixRunQueries.js";
 
 const getAllRepos = async (req: AuthRequest, res: express.Response) => {
     try {
@@ -329,4 +335,150 @@ const fixSignal = async (req: AuthRequest, res: express.Response) => {
     }
 };
 
-export { getAllRepos, getRepoDetails, createRepository, deleteRepo, getRepoSignals, fixSignal };
+/** Validated `:id` and `:signalId` path params, or null after sending a 400. */
+function signalParams(req: AuthRequest, res: express.Response) {
+    const repoId = req.params.id;
+    const signalId = req.params.signalId;
+    if (!repoId || typeof repoId !== "string" || !signalId || typeof signalId !== "string") {
+        res.status(400).json({ message: "Invalid or missing repository or signal ID" });
+        return null;
+    }
+    return { repoId, signalId };
+}
+
+/**
+ * GET /repositories/:id/signals/:signalId
+ *
+ * The signal plus every fix run for it (newest first): progress timeline,
+ * suspected code locations, each patch attempt with its outcome, and PR.
+ */
+const getSignalDetail = async (req: AuthRequest, res: express.Response) => {
+    try {
+        const userId = req.userId;
+        if (!userId) {
+            return res.status(401).json({ message: "Not Authorized" });
+        }
+        const params = signalParams(req, res);
+        if (!params) return;
+
+        const signal = await getSignalForUser(params.repoId, params.signalId, userId);
+        if (!signal) {
+            return res.status(404).json({ message: "Signal not found" });
+        }
+
+        const runs = await getFixRunsForSignal(params.signalId);
+        return res.status(200).json({ signal, runs });
+    } catch (err: any) {
+        // Malformed UUID in the path
+        if (err?.code === "22P02") {
+            return res.status(404).json({ message: "Signal not found" });
+        }
+        console.error("Error while fetching signal detail", err);
+        return res.status(500).json({ error: "Internal server error" });
+    }
+};
+
+const STREAM_POLL_MS = 1_000;
+const STREAM_KEEPALIVE_MS = 25_000;
+
+/**
+ * GET /repositories/:id/signals/:signalId/stream (Server-Sent Events)
+ *
+ * The agent only writes to the database, so this endpoint watches job_events
+ * and fix_jobs for the signal and pushes changes to the page:
+ *   event: progress — one new timeline event (`id:` is its cursor, so a
+ *                     reconnecting EventSource resumes via Last-Event-ID)
+ *   event: run      — a fix run was created or changed status; the client
+ *                     refetches the detail for patches, outcome and PR.
+ * Resumes after `?after=<cursor>` (the last event the page already has).
+ */
+const streamSignalProgress = async (req: AuthRequest, res: express.Response) => {
+    try {
+        const userId = req.userId;
+        if (!userId) {
+            return res.status(401).json({ message: "Not Authorized" });
+        }
+        const params = signalParams(req, res);
+        if (!params) return;
+
+        const signal = await getSignalForUser(params.repoId, params.signalId, userId);
+        if (!signal) {
+            return res.status(404).json({ message: "Signal not found" });
+        }
+
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders();
+
+        const lastEventId = req.headers["last-event-id"];
+        const after = req.query.after;
+        let cursor: string | null =
+            (typeof lastEventId === "string" && lastEventId) ||
+            (typeof after === "string" && after) ||
+            null;
+        let runsSnapshot: string | null = null;
+        let closed = false;
+        let busy = false;
+
+        const tick = async () => {
+            if (closed || busy) return;
+            busy = true;
+            try {
+                const events = await getSignalEventsAfter(params.signalId, cursor);
+                for (const event of events) {
+                    cursor = event.cursor;
+                    res.write(`id: ${event.cursor}\nevent: progress\ndata: ${JSON.stringify(event)}\n\n`);
+                }
+
+                const runs = JSON.stringify(await getFixRunStates(params.signalId));
+                if (runsSnapshot !== null && runs !== runsSnapshot) {
+                    res.write(`event: run\ndata: ${runs}\n\n`);
+                }
+                runsSnapshot = runs;
+            } catch (err: any) {
+                // A malformed client-supplied cursor: start over (the client dedupes by event id)
+                if (err?.code === "22007" || err?.code === "22008") {
+                    cursor = null;
+                } else {
+                    console.error("[signal-stream] Failed to poll progress", err);
+                }
+            } finally {
+                busy = false;
+            }
+        };
+
+        await tick();
+        const poll = setInterval(tick, STREAM_POLL_MS);
+        const keepAlive = setInterval(() => {
+            if (!closed) res.write(": ping\n\n");
+        }, STREAM_KEEPALIVE_MS);
+
+        req.on("close", () => {
+            closed = true;
+            clearInterval(poll);
+            clearInterval(keepAlive);
+        });
+    } catch (err: any) {
+        if (res.headersSent) {
+            res.end();
+            return;
+        }
+        if (err?.code === "22P02") {
+            return res.status(404).json({ message: "Signal not found" });
+        }
+        console.error("Error while opening signal progress stream", err);
+        return res.status(500).json({ error: "Internal server error" });
+    }
+};
+
+export {
+    getAllRepos,
+    getRepoDetails,
+    createRepository,
+    deleteRepo,
+    getRepoSignals,
+    fixSignal,
+    getSignalDetail,
+    streamSignalProgress,
+};
